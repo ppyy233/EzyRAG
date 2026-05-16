@@ -10,13 +10,7 @@ QwenKB V1.2 — 知识库构建脚本 (Client-Server 模式)
   python build_kb.py --full        全量重建（影子集合，原子切换）
   python build_kb.py --full -c x   全量重建指定集合
 """
-import os
-import sys
-import shutil
-import time
-import json
-import hashlib
-import argparse
+import os, sys, time, json, hashlib, argparse
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
@@ -172,14 +166,34 @@ def content_hash(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()
 
 
-def clean_orphan_dirs(chroma_dir: Path):
-    """清理 chroma_db/ 下所有孤立 UUID 目录"""
-    if not chroma_dir.exists():
-        return
-    for d in chroma_dir.iterdir():
-        if d.is_dir():
-            shutil.rmtree(d, ignore_errors=True)
-            print(f"  清理孤立目录: {d.name}")
+def clean_old_shadows(chroma_client, collection_key):
+    """清理旧版本化影子集合，不碰当前活跃集合"""
+    active = get_active_collection(collection_key)
+    try:
+        collections = chroma_client.list_collections()
+        for col in collections:
+            if col.name.startswith(f"{collection_key}_v") and col.name != active:
+                chroma_client.delete_collection(col.name)
+                print(f"  清理旧影子: {col.name}")
+    except Exception:
+        pass
+
+
+def chunk_documents(documents: List[dict]) -> List[dict]:
+    """对所有文档切片，生成带 content_hash 的 chunk 列表"""
+    all_chunks = []
+    for doc in documents:
+        doc_hash = content_hash(doc["text"])
+        chunks = split_text(doc["text"], config.CHUNK_SIZE, config.CHUNK_OVERLAP)
+        for i, chunk in enumerate(chunks):
+            all_chunks.append({
+                "id": f"{md5_short(doc['path'])}-{i}",
+                "text": chunk,
+                "source": doc["path"],
+                "chunk_index": i,
+                "content_hash": doc_hash,
+            })
+    return all_chunks
 
 
 def batch_add(collection, chunks, emb_proxy, add_batch_size=50, total=None):
@@ -229,8 +243,8 @@ def build_full(collection_key: str, chroma_client, documents, emb_proxy):
 
     try:
         batch_add(shadow, all_chunks, emb_proxy, total=len(all_chunks))
-    except Exception:
-        print("  建库失败，清理影子集合")
+    except (Exception, KeyboardInterrupt):
+        print("\n  建库中断，回滚——清理影子集合")
         chroma_client.delete_collection(shadow_name)
         raise
 
@@ -348,7 +362,6 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
 
     base_dir = get_base_dir()
     docs_dir = base_dir / config.DOCS_DIR
-    chroma_dir = base_dir / config.CHROMA_DIR
 
     mode = "全量重建" if full_rebuild else "增量更新"
     print("=" * 60)
@@ -365,7 +378,6 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
 
     # Step 1: 清理 + 连接
     print("\n[1/5] 连接 ChromaDB Server...")
-    clean_orphan_dirs(chroma_dir)
     chroma_client = chromadb.HttpClient(
         host=config.CHROMA_SERVER_HOST,
         port=config.CHROMA_SERVER_PORT,
@@ -377,6 +389,7 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
         print(f"  无法连接 ChromaDB Server: {e}")
         print(f"  请先启动: start_chroma_server.bat")
         return
+    clean_old_shadows(chroma_client, collection_name)
 
     # Step 2: 获取 LM Studio 代理
     print("\n[2/5] 初始化 LM Studio 代理...")
