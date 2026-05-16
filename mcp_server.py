@@ -12,7 +12,6 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from openai import OpenAI
 import chromadb
 import uvicorn
 from fastapi import FastAPI, Request
@@ -20,6 +19,7 @@ from fastapi.responses import JSONResponse
 import httpx
 
 import config
+from lm_proxy import get_lm_proxy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,17 +58,6 @@ def get_active_collection_name() -> str:
             data = json.load(fp)
             return data.get(config.COLLECTION_NAME, config.COLLECTION_NAME)
     return config.COLLECTION_NAME
-
-
-def get_oai_client():
-    global _oai_client
-    if _oai_client is None:
-        _oai_client = OpenAI(
-            api_key=config.EMBEDDING_API_KEY,
-            base_url=config.EMBEDDING_API_URL.rsplit("/v1/", 1)[0] + "/v1/",
-        )
-    return _oai_client
-
 
 async def get_chroma_client():
     global _chroma_client
@@ -113,18 +102,11 @@ async def check_lm_studio_health() -> tuple[bool, str]:
         return False, f"LM Studio 未启动或不可访问: {e}"
 
 
-def embed_query(query: str) -> list[float]:
-    client = get_oai_client()
-    resp = client.embeddings.create(
-        model=config.EMBEDDING_MODEL,
-        input=[query],
-    )
-    vec = resp.data[0].embedding
-    if len(vec) != config.EMBEDDING_DIM:
-        raise ValueError(
-            f"LM Studio 返回向量维度 {len(vec)}，期望 {config.EMBEDDING_DIM}"
-        )
-    return vec
+async def embed_query_async(query: str) -> list[float]:
+    """异步向量化——通过 LM Studio 代理，VIP 优先级"""
+    proxy = get_lm_proxy()
+    vectors = await proxy.embed_async([query], priority=0)
+    return vectors[0]
 
 
 async def search_async(query: str) -> str:
@@ -133,7 +115,7 @@ async def search_async(query: str) -> str:
         return f"[错误] {err}\n请启动 LM Studio 并加载 Qwen3-Embedding 模型后重试。"
 
     try:
-        query_vec = await asyncio.to_thread(embed_query, query)
+        query_vec = await embed_query_async(query)
         collection = await get_collection_async()
         results = await collection.query(
             query_embeddings=[query_vec],

@@ -21,12 +21,12 @@ from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
 
-from openai import OpenAI
 import chromadb
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 
 import config
+from lm_proxy import get_lm_proxy
 
 POINTER_FILE = "collection_pointer.json"
 
@@ -172,31 +172,6 @@ def content_hash(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()
 
 
-class EmbeddingClient:
-    """LM Studio 嵌入客户端"""
-
-    def __init__(self, openai_client: OpenAI, model: str, dim: int):
-        self._client = openai_client
-        self._model = model
-        self._dim = dim
-
-    def embed(self, texts: List[str]) -> List[List[float]]:
-        embeddings = []
-        batch_size = 20
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
-            resp = self._client.embeddings.create(model=self._model, input=batch)
-            for item in resp.data:
-                vec = item.embedding
-                if len(vec) != self._dim:
-                    raise ValueError(
-                        f"LM Studio 返回向量维度 {len(vec)}，期望 {self._dim}。"
-                        f"请检查 {self._model} 模型配置"
-                    )
-                embeddings.append(vec)
-        return embeddings
-
-
 def clean_orphan_dirs(chroma_dir: Path):
     """清理 chroma_db/ 下所有孤立 UUID 目录"""
     if not chroma_dir.exists():
@@ -207,25 +182,8 @@ def clean_orphan_dirs(chroma_dir: Path):
             print(f"  清理孤立目录: {d.name}")
 
 
-def chunk_documents(documents: List[dict]) -> List[dict]:
-    all_chunks = []
-    for doc in documents:
-        doc_hash = content_hash(doc["text"])
-        chunks = split_text(doc["text"], config.CHUNK_SIZE, config.CHUNK_OVERLAP)
-        for i, chunk in enumerate(chunks):
-            all_chunks.append({
-                "id": f"{md5_short(doc['path'])}-{i}",
-                "text": chunk,
-                "source": doc["path"],
-                "chunk_index": i,
-                "content_hash": doc_hash,
-            })
-    return all_chunks
-
-
-def batch_add(collection, chunks: List[dict], emb_client: EmbeddingClient,
-              add_batch_size: int = 50, total: int = None):
-    """批量向量化 + 入库"""
+def batch_add(collection, chunks, emb_proxy, add_batch_size=50, total=None):
+    """批量向量化 + 入库（通过 LM Studio 代理，支持优先级调度）"""
     if total is None:
         total = len(chunks)
     for i in range(0, len(chunks), add_batch_size):
@@ -234,7 +192,7 @@ def batch_add(collection, chunks: List[dict], emb_client: EmbeddingClient,
         texts = [c["text"] for c in batch]
         metas = [{"source": c["source"], "chunk_index": c["chunk_index"],
                   "content_hash": c["content_hash"]} for c in batch]
-        embeddings = emb_client.embed(texts)
+        embeddings = emb_proxy.embed_sync(texts, priority=100)
         collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metas)
         done = i + len(batch)
         pct = min(100, int(done / total * 100))
@@ -243,7 +201,7 @@ def batch_add(collection, chunks: List[dict], emb_client: EmbeddingClient,
             time.sleep(0.1)
 
 
-def build_full(collection_key: str, chroma_client, documents, emb_client):
+def build_full(collection_key: str, chroma_client, documents, emb_proxy):
     """
     全量重建 — 影子集合模式
     1. 建影子集合 {name}_{timestamp}
@@ -270,7 +228,7 @@ def build_full(collection_key: str, chroma_client, documents, emb_client):
     print(f"  共切出 {len(all_chunks)} 个文本块")
 
     try:
-        batch_add(shadow, all_chunks, emb_client, total=len(all_chunks))
+        batch_add(shadow, all_chunks, emb_proxy, total=len(all_chunks))
     except Exception:
         print("  建库失败，清理影子集合")
         chroma_client.delete_collection(shadow_name)
@@ -295,7 +253,7 @@ def build_full(collection_key: str, chroma_client, documents, emb_client):
     return count
 
 
-def build_incremental(collection_key: str, chroma_client, documents, emb_client):
+def build_incremental(collection_key: str, chroma_client, documents, emb_proxy):
     """
     增量更新 — 影子集合模式
     1. 读旧集合全部数据（含向量）
@@ -315,7 +273,7 @@ def build_incremental(collection_key: str, chroma_client, documents, emb_client)
         active = chroma_client.get_collection(name=current)
     except Exception:
         print("  旧集合不存在，按全量重建")
-        return build_full(collection_key, chroma_client, documents, emb_client)
+        return build_full(collection_key, chroma_client, documents, emb_proxy)
 
     # 先只取 metadata（轻量），做 hash 对比
     try:
@@ -381,7 +339,7 @@ def build_incremental(collection_key: str, chroma_client, documents, emb_client)
 
     # 有变化 → 全量影子集合（1.5.9 get 带 embedding 不可靠，不复制向量）
     print(f"  处理 {len(all_changed)} 个变化文件 + {unchanged_count} 个未变文件...")
-    return build_full(collection_key, chroma_client, documents, emb_client)
+    return build_full(collection_key, chroma_client, documents, emb_proxy)
 
 
 def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False):
@@ -420,21 +378,14 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
         print(f"  请先启动: start_chroma_server.bat")
         return
 
-    # Step 2: 检查 LM Studio
-    print("\n[2/5] 检查 LM Studio...")
-    oai_client = OpenAI(
-        api_key=config.EMBEDDING_API_KEY,
-        base_url=config.EMBEDDING_API_URL.rsplit("/v1/", 1)[0] + "/v1/",
-    )
+    # Step 2: 获取 LM Studio 代理
+    print("\n[2/5] 初始化 LM Studio 代理...")
     try:
-        models_resp = oai_client.models.list()
-        print(f"  已连接 (模型数: {len(models_resp.data)})")
+        emb_proxy = get_lm_proxy()
+        print(f"  代理就绪 (模型: {emb_proxy._model})")
     except Exception as e:
         print(f"  无法连接 LM Studio: {e}")
-        print(f"  请启动 LM Studio 并加载 {config.EMBEDDING_MODEL} 模型后重试")
         return
-
-    emb_client = EmbeddingClient(oai_client, config.EMBEDDING_MODEL, config.EMBEDDING_DIM)
 
     # Step 3: 加载文档
     print("\n[3/5] 加载文档...")
@@ -446,9 +397,9 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
     # Step 4: 建库
     print(f"\n[4/5] 向量化并存入 ChromaDB ({mode})...")
     if full_rebuild:
-        count = build_full(collection_name, chroma_client, documents, emb_client)
+        count = build_full(collection_name, chroma_client, documents, emb_proxy)
     else:
-        count = build_incremental(collection_name, chroma_client, documents, emb_client)
+        count = build_incremental(collection_name, chroma_client, documents, emb_proxy)
 
     active = get_active_collection(collection_name)
     print(f"\n" + "=" * 60)
