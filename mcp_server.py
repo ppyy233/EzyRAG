@@ -40,11 +40,24 @@ def get_base_dir():
     return Path(__file__).resolve().parent
 
 
-app = FastAPI(title="QwenKB MCP Server", version="1.1.0")
+app = FastAPI(title="QwenKB MCP Server", version="1.2.0")
 
 _oai_client = None
 _chroma_client = None
 _chroma_collection = None
+
+
+POINTER_FILE = "collection_pointer.json"
+_active_collection_name = None
+
+def get_active_collection_name() -> str:
+    """读取指针文件中的活跃集合名"""
+    f = Path(__file__).resolve().parent / POINTER_FILE
+    if f.exists():
+        with open(f, "r", encoding="utf-8") as fp:
+            data = json.load(fp)
+            return data.get(config.COLLECTION_NAME, config.COLLECTION_NAME)
+    return config.COLLECTION_NAME
 
 
 def get_oai_client():
@@ -68,10 +81,21 @@ async def get_chroma_client():
 
 
 async def get_collection_async():
-    global _chroma_collection
-    if _chroma_collection is None:
+    global _chroma_collection, _active_collection_name
+    current = get_active_collection_name()
+    if _chroma_collection is None or current != _active_collection_name:
         client = await get_chroma_client()
-        _chroma_collection = await client.get_collection(name=config.COLLECTION_NAME)
+        try:
+            _chroma_collection = await client.get_collection(name=current)
+        except Exception:
+            logger.warning(f"指针集合 {current} 不存在，回退到 {config.COLLECTION_NAME}")
+            _chroma_collection = await client.get_or_create_collection(
+                name=config.COLLECTION_NAME,
+                metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100000},
+            )
+            current = config.COLLECTION_NAME
+        _active_collection_name = current
+        logger.info(f"活跃集合: {current}")
     return _chroma_collection
 
 
@@ -156,7 +180,7 @@ async def health_check():
         "lm_studio": {"online": ok, "error": err},
         "chromadb": {
             "server": f"{config.CHROMA_SERVER_HOST}:{config.CHROMA_SERVER_PORT}",
-            "collection": config.COLLECTION_NAME,
+            "collection": get_active_collection_name(),
             "documents": db_count,
         },
     }
@@ -228,7 +252,7 @@ async def mcp_endpoint(request: Request):
             "id": req_id,
             "result": {
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "QwenKB", "version": "1.1.0"},
+                "serverInfo": {"name": "QwenKB", "version": "1.2.0"},
                 "capabilities": {"tools": {}}
             }
         })
@@ -245,7 +269,7 @@ async def mcp_endpoint(request: Request):
 
 
 def main():
-    logger.info("QwenKB MCP Server V1.1.0 启动中...")
+    logger.info("QwenKB MCP Server V1.2.0 启动中...")
     logger.info(f"LM Studio: {config.EMBEDDING_API_URL}")
     logger.info(f"ChromaDB Server: {config.CHROMA_SERVER_HOST}:{config.CHROMA_SERVER_PORT}")
     logger.info(f"监听: http://{config.MCP_SERVER_HOST}:{config.MCP_SERVER_PORT}")
