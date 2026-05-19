@@ -22,3 +22,9 @@ docs/*
 # Vector database (ignore all except placeholder)
 chroma_db/*
 !chroma_db/.gitkeep
+
+# Environment variables (contains real API keys)
+.env
+
+# Runtime generated files
+collection_pointer.json
