@@ -18,6 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import httpx
 
+import time as _time
 import config
 from lm_proxy import get_lm_proxy
 
@@ -102,6 +103,22 @@ async def check_lm_studio_health() -> tuple[bool, str]:
         return False, f"LM Studio 未启动或不可访问: {e}"
 
 
+_health_cache = {"ok": False, "err": "", "last_check": 0.0}
+_health_lock = asyncio.Lock()
+
+
+async def check_lm_studio_cached():
+    now = _time.time()
+    if now - _health_cache["last_check"] < 30:
+        return _health_cache["ok"], _health_cache["err"]
+    async with _health_lock:
+        if now - _health_cache["last_check"] < 30:
+            return _health_cache["ok"], _health_cache["err"]
+        _health_cache["ok"], _health_cache["err"] = await check_lm_studio_health()
+        _health_cache["last_check"] = _time.time()
+        return _health_cache["ok"], _health_cache["err"]
+
+
 async def embed_query_async(query: str) -> list[float]:
     """异步向量化——通过 LM Studio 代理，VIP 优先级"""
     proxy = get_lm_proxy()
@@ -122,7 +139,7 @@ async def rerank_async(query: str, documents: list[str]) -> list[float]:
 
 
 async def search_async(query: str) -> str:
-    ok, err = await check_lm_studio_health()
+    ok, err = await check_lm_studio_cached()
     if not ok:
         return f"[错误] {err}\n请启动 LM Studio 并加载 Qwen3-Embedding 模型后重试。"
 

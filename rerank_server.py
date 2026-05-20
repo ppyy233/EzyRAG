@@ -28,6 +28,19 @@ app = FastAPI(title="QwenKB Rerank Server", version="1.0.0")
 _model = None
 
 
+def detect_device():
+    try:
+        import torch
+        if torch.cuda.is_available():
+            name = torch.cuda.get_device_name(0)
+            logger.info(f"检测到 GPU: {name}")
+            return "cuda"
+    except ImportError:
+        pass
+    logger.info("使用 CPU")
+    return "cpu"
+
+
 def load_model(model_name: str = None):
     global _model
     import os as _os
@@ -35,7 +48,8 @@ def load_model(model_name: str = None):
         model_name = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "models", "bge-reranker")
     logger.info(f"加载重排模型: {model_name}")
     from sentence_transformers import CrossEncoder
-    _model = CrossEncoder(model_name, trust_remote_code=True)
+    device = detect_device()
+    _model = CrossEncoder(model_name, device=device, trust_remote_code=True)
     logger.info("重排模型就绪")
 
 
