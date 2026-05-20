@@ -109,6 +109,18 @@ async def embed_query_async(query: str) -> list[float]:
     return vectors[0]
 
 
+async def rerank_async(query: str, documents: list[str]) -> list[float]:
+    """调用重排 API（本地 rerank_server 或云端），返回分数列表"""
+    url = config.RERANK_API_URL.rstrip("/") + "/rerank"
+    headers = {"Content-Type": "application/json"}
+    if config.RERANK_API_KEY:
+        headers["Authorization"] = f"Bearer {config.RERANK_API_KEY}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, json={"query": query, "documents": documents}, headers=headers)
+        r.raise_for_status()
+        return r.json()["scores"]
+
+
 async def search_async(query: str) -> str:
     ok, err = await check_lm_studio_health()
     if not ok:
@@ -117,21 +129,46 @@ async def search_async(query: str) -> str:
     try:
         query_vec = await embed_query_async(query)
         collection = await get_collection_async()
+
+        do_rerank = config.RERANK_ENABLED
+        fetch_k = config.RETRIEVAL_FETCH_K if do_rerank else config.RETRIEVAL_K
+
         results = await collection.query(
             query_embeddings=[query_vec],
-            n_results=config.RETRIEVAL_K,
+            n_results=fetch_k,
             include=["documents", "metadatas", "distances"],
         )
 
         if not results or not results["ids"] or not results["ids"][0]:
             return "知识库中未找到相关内容。"
 
-        parts = [f"找到 {len(results['ids'][0])} 条相关文档:\n"]
+        ids = results["ids"][0]
+        docs = results["documents"][0]
+        metas = results["metadatas"][0]
+        dists = results["distances"][0]
+
+        if do_rerank and len(docs) > config.RETRIEVAL_K:
+            try:
+                scores = await rerank_async(query, docs)
+                ranked = sorted(zip(range(len(docs)), scores), key=lambda x: x[1], reverse=True)
+                top_indices = [i for i, _ in ranked[:config.RETRIEVAL_K]]
+                ids = [ids[i] for i in top_indices]
+                docs = [docs[i] for i in top_indices]
+                metas = [metas[i] for i in top_indices]
+                dists = [dists[i] for i in top_indices]
+                logger.info(f"重排完成，取 top-{config.RETRIEVAL_K}")
+            except Exception as e:
+                logger.warning(f"重排失败，使用原始结果: {e}")
+                docs = docs[:config.RETRIEVAL_K]
+                metas = metas[:config.RETRIEVAL_K]
+                dists = dists[:config.RETRIEVAL_K]
+                ids = ids[:config.RETRIEVAL_K]
+
+        parts = [f"找到 {len(docs)} 条相关文档:\n"]
+        if do_rerank:
+            parts = [f"找到 {len(docs)} 条相关文档（已通过重排优化）:\n"]
         for i, (doc_id, doc_text, meta, dist) in enumerate(zip(
-            results["ids"][0],
-            results["documents"][0],
-            results["metadatas"][0],
-            results["distances"][0],
+            ids, docs, metas, dists
         ), 1):
             source = meta.get("source", "未知来源")
             fname = os.path.basename(source)

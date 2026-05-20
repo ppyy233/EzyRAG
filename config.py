@@ -37,6 +37,14 @@ RETRIEVAL_FETCH_K    = 15
 RETRIEVAL_LAMBDA     = 0.7
 RETRIEVAL_THRESHOLD  = 0.3
 
+# ====== 重排（Rerank）参数（来自 .env，可选） ======
+# 不启用重排: RERANK_ENABLED=false
+# 本地 BGE:    RERANK_API_URL=http://127.0.0.1:5001  RERANK_API_KEY=
+# 云端 Cohere: RERANK_API_URL=https://api.cohere.ai/v1  RERANK_API_KEY=xxx
+RERANK_ENABLED = os.getenv("RERANK_ENABLED", "false").lower() == "true"
+RERANK_API_URL = os.getenv("RERANK_API_URL", "http://127.0.0.1:5001")
+RERANK_API_KEY = os.getenv("RERANK_API_KEY", "")
+
 # ====== MCP 服务器参数（来自 .env） ======
 MCP_SERVER_HOST = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
 MCP_SERVER_PORT = int(os.getenv("MCP_SERVER_PORT", "8766"))

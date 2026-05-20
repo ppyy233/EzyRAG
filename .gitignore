@@ -28,3 +28,6 @@ chroma_db/*
 
 # Runtime generated files
 collection_pointer.json
+
+# Downloaded model files
+models/
