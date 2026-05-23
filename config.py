@@ -26,10 +26,43 @@ CHROMA_SERVER_HOST = os.getenv("CHROMA_SERVER_HOST", "127.0.0.1")
 CHROMA_SERVER_PORT = int(os.getenv("CHROMA_SERVER_PORT", "9898"))
 COLLECTION_NAME    = "qwenkb_docs"
 
-# ====== 文档切片参数 ======
-CHUNK_SIZE    = 500
-CHUNK_OVERLAP = 50
-CHINESE_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "；", "，", "、", " "]
+# ====== 文档切片模板 ======
+# 通过 .env CHUNK_TEMPLATE 或命令行 --template 选择
+# strategy: "recursive"（推荐，保留段落结构） / "flat"（兼容旧逻辑）
+CHUNK_TEMPLATES = {
+    "academic": {
+        "name": "英文文献专用",
+        "chunk_size": 2000,
+        "overlap": 200,
+        "strategy": "recursive",
+        "separators": ["\n\n", "\n", "\r\n", "。", ". ", "！", "?", "？", "!", "；", ";", "，", ",", "、", " ", ""],
+    },
+    "chinese": {
+        "name": "中文专用",
+        "chunk_size": 1500,
+        "overlap": 150,
+        "strategy": "recursive",
+        "separators": ["\n\n", "\n", "。", "！", "？", "；", "，", "、", " ", ""],
+    },
+    "code": {
+        "name": "数据分析/代码专用",
+        "chunk_size": 3000,
+        "overlap": 300,
+        "strategy": "flat",
+        "separators": ["\n\n\n", "\n\n", "\n", ". ", " ", ""],
+    },
+}
+
+CHUNK_TEMPLATE = os.getenv("CHUNK_TEMPLATE", "academic")
+
+
+def get_chunk_config(template_name: str = None) -> dict:
+    """返回当前激活的切块模板配置"""
+    name = template_name or CHUNK_TEMPLATE
+    if name not in CHUNK_TEMPLATES:
+        name = "academic"
+    return CHUNK_TEMPLATES[name]
+
 
 # ====== 检索参数 ======
 RETRIEVAL_K          = 5

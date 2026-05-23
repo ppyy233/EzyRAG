@@ -115,6 +115,8 @@ def load_all_documents(docs_dir: Path) -> List[dict]:
                 text = reader_fn(str(f))
                 if text.strip():
                     rel = f.relative_to(docs_dir)
+                    doc_name = os.path.splitext(f.name)[0]
+                    text = f"[文件名: {doc_name}]\n{text}"
                     documents.append({"path": str(f), "text": text})
                     print(f"  [OK] {rel} ({len(text)} 字)")
                 else:
@@ -125,10 +127,83 @@ def load_all_documents(docs_dir: Path) -> List[dict]:
     return documents
 
 
-def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-    sep = config.CHINESE_SEPARATORS
+def split_text(text: str, cfg: dict) -> List[str]:
+    """按模板配置切片。strategy='recursive' 时保留段落结构"""
+    chunk_size = cfg["chunk_size"]
+    overlap = cfg["overlap"]
+    strategy = cfg.get("strategy", "flat")
+    separators = cfg["separators"]
+
+    if strategy == "recursive":
+        return _split_recursive(text, chunk_size, overlap, separators)
+    else:
+        return _split_flat(text, chunk_size, overlap, separators)
+
+
+def _split_recursive(text: str, chunk_size: int, overlap: int, separators: list) -> List[str]:
+    """递归分层切片：段落 → 句子 → 字符。保留学术文献的段落完整性"""
+    # 1. 从最粗分隔符开始：段落
+    para_seps = [s for s in separators if s in ("\n\n", "\r\n\r\n", "\r\n")]
+    if not para_seps:
+        para_seps = ["\n\n"]
+
+    paragraphs = [text]
+    for s in para_seps:
+        expanded = []
+        for p in paragraphs:
+            expanded.extend(p.split(s))
+        paragraphs = expanded
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+    # 2. 逐段落处理
+    # 句子级分隔符（从粗到细）
+    sent_seps = [s for s in separators
+                 if s not in ("\n\n", "\r\n\r\n", "\r\n", " ", "") and s]
+
+    chunks = []
+    current = ""
+
+    for para in paragraphs:
+        if len(para) <= chunk_size:
+            _add_segment(current, para, chunk_size, overlap, chunks)
+            if para == paragraphs[-1]:
+                continue
+            current = _update_current(current, para, chunk_size, overlap)
+            continue
+
+        # 段落太长 → 先按句切
+        sentences = [para]
+        for raw_s in sent_seps:
+            s = "\n" if raw_s == "\n" else raw_s
+            if s == "\n" and "\n\n" in separators:
+                continue
+            expanded = []
+            for seg in sentences:
+                expanded.extend(seg.split(s))
+            sentences = expanded
+        sentences = [seg.strip() + _pick_suffix(para, seg) for seg in sentences if seg.strip()]
+        sentences = [seg.rstrip() for seg in sentences if seg.strip()]
+
+        # 对每个句子按段内方式拼接
+        for sent in sentences:
+            if len(sent) > chunk_size:
+                # 单句过长，按空格硬切
+                _hard_split_long(sent, chunk_size, overlap, chunks)
+                current = ""
+                continue
+            _add_segment(current, sent, chunk_size, overlap, chunks)
+            current = _update_current(current, sent, chunk_size, overlap)
+
+    if current.strip():
+        chunks.append(current.strip())
+
+    return _final_pass(chunks, chunk_size)
+
+
+def _split_flat(text: str, chunk_size: int, overlap: int, separators: list) -> List[str]:
+    """扁平切片（兼容旧逻辑），不保留段落结构"""
     parts = [text]
-    for s in sep:
+    for s in separators:
         if not s:
             continue
         new_parts = []
@@ -136,26 +211,86 @@ def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
             new_parts.extend(p.split(s))
         parts = new_parts
     segments = [seg.strip() for seg in parts if seg.strip()]
+
     chunks = []
-    current_chunk = ""
+    current = ""
     for seg in segments:
-        if current_chunk and len(current_chunk) + len(seg) > chunk_size:
-            chunks.append(current_chunk.strip())
-            if overlap > 0 and len(current_chunk) > overlap:
-                current_chunk = current_chunk[-overlap:] + seg
+        if current and len(current) + len(seg) > chunk_size:
+            chunks.append(current.strip())
+            if overlap > 0 and len(current) > overlap:
+                current = current[-overlap:] + " " + seg
             else:
-                current_chunk = seg
+                current = seg
         else:
-            current_chunk = current_chunk + " " + seg if current_chunk else seg
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
-    for i, ch in enumerate(chunks):
-        if len(ch) > chunk_size * 1.5:
-            sub_chunks = []
-            for j in range(0, len(ch), chunk_size):
-                sub_chunks.append(ch[j:j + chunk_size])
-            chunks[i:i + 1] = sub_chunks
-    return chunks
+            current = current + " " + seg if current else seg
+    if current.strip():
+        chunks.append(current.strip())
+    return _final_pass(chunks, chunk_size)
+
+
+def _add_segment(current: str, seg: str, chunk_size: int, overlap: int, chunks: list):
+    """将当前段落添加到 chunk，超出则切分"""
+    if not current:
+        return
+    if len(current) + len(seg) > chunk_size:
+        chunks.append(current.strip())
+
+
+def _update_current(current: str, seg: str, chunk_size: int, overlap: int) -> str:
+    """计算下一段落的 current 状态"""
+    if not current:
+        return seg
+    if len(current) + len(seg) > chunk_size:
+        if overlap > 0 and len(current) > overlap:
+            return current[-overlap:] + " " + seg
+        return seg
+    return current + " " + seg
+
+
+def _pick_suffix(text: str, seg: str) -> str:
+    """恢复按句切时丢失的标点"""
+    idx = text.find(seg)
+    if idx < 0:
+        return ""
+    end = idx + len(seg)
+    if end < len(text) and text[end] in ".。!！?？;；":
+        return text[end]
+    return ""
+
+
+def _hard_split_long(text: str, chunk_size: int, overlap: int, chunks: list):
+    """对超长文本硬切，优先在空格处断"""
+    i = 0
+    while i < len(text):
+        end = min(i + chunk_size, len(text))
+        if end >= len(text):
+            chunks.append(text[i:].strip())
+            break
+        # 尝试在空格处断
+        cut = text.rfind(" ", i, end)
+        if cut > i + chunk_size // 2:
+            chunks.append(text[i:cut].strip())
+            i = max(i, cut - overlap)
+        else:
+            chunks.append(text[i:end].strip())
+            i = max(i, end - overlap)
+        if i >= len(text):
+            break
+
+
+def _final_pass(chunks: list, chunk_size: int) -> List[str]:
+    """对超长子串兜底硬切"""
+    result = []
+    for ch in chunks:
+        if len(ch) <= chunk_size * 1.5:
+            result.append(ch)
+            continue
+        i = 0
+        while i < len(ch):
+            end = min(i + chunk_size, len(ch))
+            result.append(ch[i:end].strip())
+            i += chunk_size
+    return result
 
 
 def md5_short(text: str) -> str:
@@ -179,12 +314,12 @@ def clean_old_shadows(chroma_client, collection_key):
         pass
 
 
-def chunk_documents(documents: List[dict]) -> List[dict]:
+def chunk_documents(documents: List[dict], chunk_cfg: dict) -> List[dict]:
     """对所有文档切片，生成带 content_hash 的 chunk 列表"""
     all_chunks = []
     for doc in documents:
         doc_hash = content_hash(doc["text"])
-        chunks = split_text(doc["text"], config.CHUNK_SIZE, config.CHUNK_OVERLAP)
+        chunks = split_text(doc["text"], chunk_cfg)
         for i, chunk in enumerate(chunks):
             all_chunks.append({
                 "id": f"{md5_short(doc['path'])}-{i}",
@@ -215,7 +350,7 @@ def batch_add(collection, chunks, emb_proxy, add_batch_size=50, total=None):
             time.sleep(0.1)
 
 
-def build_full(collection_key: str, chroma_client, documents, emb_proxy):
+def build_full(collection_key: str, chroma_client, documents, emb_proxy, chunk_cfg: dict):
     """
     全量重建 — 影子集合模式
     1. 建影子集合 {name}_{timestamp}
@@ -238,7 +373,7 @@ def build_full(collection_key: str, chroma_client, documents, emb_proxy):
         metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100000},
     )
 
-    all_chunks = chunk_documents(documents)
+    all_chunks = chunk_documents(documents, chunk_cfg)
     print(f"  共切出 {len(all_chunks)} 个文本块")
 
     try:
@@ -267,7 +402,7 @@ def build_full(collection_key: str, chroma_client, documents, emb_proxy):
     return count
 
 
-def build_incremental(collection_key: str, chroma_client, documents, emb_proxy):
+def build_incremental(collection_key: str, chroma_client, documents, emb_proxy, chunk_cfg: dict):
     """
     增量更新 — 影子集合模式
     1. 读旧集合全部数据（含向量）
@@ -287,7 +422,7 @@ def build_incremental(collection_key: str, chroma_client, documents, emb_proxy):
         active = chroma_client.get_collection(name=current)
     except Exception:
         print("  旧集合不存在，按全量重建")
-        return build_full(collection_key, chroma_client, documents, emb_proxy)
+        return build_full(collection_key, chroma_client, documents, emb_proxy, chunk_cfg)
 
     # 先只取 metadata（轻量），做 hash 对比
     try:
@@ -318,7 +453,7 @@ def build_incremental(collection_key: str, chroma_client, documents, emb_proxy):
             # 旧数据无 content_hash，按 chunk 数比较
             old_chunk_count = sum(1 for m in existing_metas
                                   if m.get("source") == doc["path"])
-            new_chunks = split_text(doc["text"], config.CHUNK_SIZE, config.CHUNK_OVERLAP)
+            new_chunks = split_text(doc["text"], chunk_cfg)
             if len(new_chunks) != old_chunk_count:
                 changed_docs.append(doc)
             else:
@@ -353,12 +488,14 @@ def build_incremental(collection_key: str, chroma_client, documents, emb_proxy):
 
     # 有变化 → 全量影子集合（1.5.9 get 带 embedding 不可靠，不复制向量）
     print(f"  处理 {len(all_changed)} 个变化文件 + {unchanged_count} 个未变文件...")
-    return build_full(collection_key, chroma_client, documents, emb_proxy)
+    return build_full(collection_key, chroma_client, documents, emb_proxy, chunk_cfg)
 
 
-def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False):
+def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False, template_name: str = None):
     if collection_name is None:
         collection_name = config.COLLECTION_NAME
+
+    chunk_cfg = config.get_chunk_config(template_name)
 
     base_dir = get_base_dir()
     docs_dir = base_dir / config.DOCS_DIR
@@ -366,6 +503,7 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
     mode = "全量重建" if full_rebuild else "增量更新"
     print("=" * 60)
     print(f"  QwenKB V1.2 — 知识库构建 ({mode})")
+    print(f"  切块模板: {chunk_cfg['name']} ({chunk_cfg['strategy']}, {chunk_cfg['chunk_size']}字)")
     print("=" * 60)
 
     if not docs_dir.exists():
@@ -410,9 +548,9 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
     # Step 4: 建库
     print(f"\n[4/5] 向量化并存入 ChromaDB ({mode})...")
     if full_rebuild:
-        count = build_full(collection_name, chroma_client, documents, emb_proxy)
+        count = build_full(collection_name, chroma_client, documents, emb_proxy, chunk_cfg)
     else:
-        count = build_incremental(collection_name, chroma_client, documents, emb_proxy)
+        count = build_incremental(collection_name, chroma_client, documents, emb_proxy, chunk_cfg)
 
     active = get_active_collection(collection_name)
     print(f"\n" + "=" * 60)
@@ -428,5 +566,8 @@ if __name__ == "__main__":
                         help=f"集合标识 (默认: {config.COLLECTION_NAME})")
     parser.add_argument("--full", action="store_true",
                         help="全量重建（影子集合 + 原子切换）")
+    parser.add_argument("--template", "-t", type=str, default=None,
+                        help=f"切块模板 (可选: {', '.join(config.CHUNK_TEMPLATES.keys())})")
     args = parser.parse_args()
-    build_knowledge_base(collection_name=args.collection, full_rebuild=args.full)
+    build_knowledge_base(collection_name=args.collection, full_rebuild=args.full,
+                         template_name=args.template)

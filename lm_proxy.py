@@ -27,7 +27,7 @@ _global_lock = threading.Lock()
 
 class LMStudioProxy:
     def __init__(self, api_key: str, base_url: str, model: str, dim: int):
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=30)
         self._model = model
         self._dim = dim
         self._queue = queue.PriorityQueue()
