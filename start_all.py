@@ -21,6 +21,13 @@ OUR_PORTS = {
     "Rerank": 5001
 }
 
+# 各服务的超时时间（Rerank 需要加载模型，时间更长）
+SERVICE_TIMEOUT = {
+    "ChromaDB": 15,
+    "MCP": 15,
+    "Rerank": 45
+}
+
 
 def check_service(host: str, port: int) -> bool:
     """检查服务是否运行"""
@@ -51,12 +58,30 @@ def wait_for_service(host: str, port: int, timeout: int = 15) -> bool:
     return False
 
 
-def start_service(name: str, module: str, host: str, port: int, timeout: int = 15) -> bool:
+def start_service(name: str, module: str, host: str, port: int, timeout: int = None) -> bool:
     """启动服务"""
-    if name in PROCESSES and PROCESSES[name].poll() is None:
-        print(f"✗ {name} 已经在运行 (PID: {PROCESSES[name].pid})")
-        return False
+    if timeout is None:
+        timeout = SERVICE_TIMEOUT.get(name, 15)
 
+    cleanup_zombie_processes()
+
+    # 1. 优先检查端口是否已监听
+    if check_service(host, port):
+        print(f"✓ {name} 已经在运行（端口 {port} 已监听）")
+        return True
+
+    # 2. 检查是否有残留进程（端口没监听，但进程在）
+    if name in PROCESSES and PROCESSES[name].poll() is None:
+        pid = PROCESSES[name].pid
+        print(f"  {name} 进程存在 (PID: {pid})，等待端口监听...")
+        if wait_for_service(host, port, timeout):
+            print(f"✓ {name} 已启动 (PID: {pid}, 端口: {port})")
+            return True
+        else:
+            print(f"✗ {name} 启动超时 ({timeout}s)")
+            return False
+
+    # 3. 启动新进程
     print(f"启动 {name}...")
     try:
         process = subprocess.Popen(
