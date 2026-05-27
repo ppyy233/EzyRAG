@@ -20,11 +20,11 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
 # ====== 文档和存储路径 ======
-DOCS_DIR   = "docs"
-CHROMA_DIR = "chroma_db"
+DOCS_DIR   = "data/docs"
+CHROMA_DIR = "data/chroma_db"
 CHROMA_SERVER_HOST = os.getenv("CHROMA_SERVER_HOST", "127.0.0.1")
 CHROMA_SERVER_PORT = int(os.getenv("CHROMA_SERVER_PORT", "9898"))
-COLLECTION_NAME    = "qwenkb_docs"
+COLLECTION_NAME    = "default_collection"
 
 # ====== 文档切片模板 ======
 # 通过 .env CHUNK_TEMPLATE 或命令行 --template 选择
@@ -80,7 +80,7 @@ RERANK_API_KEY = os.getenv("RERANK_API_KEY", "")
 
 # ====== MCP 服务器参数（来自 .env） ======
 MCP_SERVER_HOST = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
-MCP_SERVER_PORT = int(os.getenv("MCP_SERVER_PORT", "8766"))
+MCP_SERVER_PORT = int(os.getenv("MCP_SERVER_PORT", "9766"))
 
 # ====== LLM 问答提示词 ======
 # 知识库优先 + 不禁止外部知识 + 标注来源

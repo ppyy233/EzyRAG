@@ -4,8 +4,8 @@ QwenKB — 本地 BGE Rerank HTTP 服务
 加载 BGE cross-encoder 模型，暴露 POST /rerank 接口
 
 用法:
-  python rerank_server.py              # 默认 127.0.0.1:5001
-  python rerank_server.py --port 5002  # 自定义端口
+  python -m servers.rerank                # 默认 127.0.0.1:5001
+  python -m servers.rerank --port 5002    # 自定义端口
 
 接口:
   POST /rerank  {"query": "...", "documents": ["...", ...]}
@@ -15,6 +15,11 @@ import os
 import sys
 import argparse
 import logging
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -43,9 +48,8 @@ def detect_device():
 
 def load_model(model_name: str = None):
     global _model
-    import os as _os
     if model_name is None:
-        model_name = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "models", "bge-reranker")
+        model_name = str(ROOT / "data" / "models" / "bge-reranker")
     logger.info(f"加载重排模型: {model_name}")
     from sentence_transformers import CrossEncoder
     device = detect_device()

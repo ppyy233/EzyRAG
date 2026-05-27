@@ -6,13 +6,13 @@ LM Studio 代理 — 优先级队列 + 工作线程
   - priority=100: 建库切片 (普通, 排队)
 
 用法:
-  from lm_proxy import get_lm_proxy
+  from core.embedder import get_lm_proxy
 
-  # build_kb.py (同步)
+  # core/builder.py (同步)
   proxy = get_lm_proxy()
   embeddings = proxy.embed_sync(["文本1", "文本2"], priority=100)
 
-  # mcp_server.py (异步)
+  # servers/mcp.py (异步)
   proxy = get_lm_proxy()
   vec = await proxy.embed_async(["查询文本"], priority=0)
 """
@@ -72,7 +72,7 @@ class LMStudioProxy:
                 event.set()
 
     def embed_sync(self, texts, priority=100, timeout=300):
-        """同步 embedding——build_kb.py 使用"""
+        """同步 embedding——core/builder.py 使用"""
         task_id = uuid.uuid4().hex
         event = threading.Event()
         self._queue.put((priority, task_id, texts, event))
@@ -85,7 +85,7 @@ class LMStudioProxy:
         return result
 
     async def embed_async(self, texts, priority=0, timeout=60):
-        """异步 embedding——mcp_server.py 使用"""
+        """异步 embedding——servers/mcp.py 使用"""
         import asyncio
         return await asyncio.to_thread(self.embed_sync, texts, priority=priority, timeout=timeout)
 

@@ -1,48 +1,43 @@
 # -*- coding: utf-8 -*-
 """
-QwenKB V1.2 — 知识库构建脚本 (Client-Server 模式)
-读取 docs/ 中的文档 → 中文友好切片 → 调用 LM Studio 向量化 → 存入 ChromaDB Server
+QwenKB — 知识库构建脚本 (Client-Server 模式)
+读取 data/docs/ 中的文档 → 中文友好切片 → 调用 LM Studio 向量化 → 存入 ChromaDB Server
 
 支持：PDF / Word / TXT / 代码文件等 30+ 格式
 
 用法:
-  python build_kb.py              增量更新（默认，只处理变化文件）
-  python build_kb.py --full        全量重建（影子集合，原子切换）
-  python build_kb.py --full -c x   全量重建指定集合
+  python -m core.builder              增量更新（默认，只处理变化文件）
+  python -m core.builder --full        全量重建（影子集合，原子切换）
+  python -m core.builder --full -c x   全量重建指定集合
 """
 import os, sys, time, json, hashlib, argparse
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
 
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 import chromadb
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 
 import config
-from lm_proxy import get_lm_proxy
+from core.embedder import get_lm_proxy
 
-POINTER_FILE = "collection_pointer.json"
-
-
-def get_base_dir() -> Path:
-    return Path(__file__).resolve().parent
-
-
-def get_pointer_file() -> Path:
-    return get_base_dir() / POINTER_FILE
+POINTER_FILE = ROOT / "runtime" / "state" / "collection_pointer.json"
 
 
 def read_pointer() -> dict:
-    f = get_pointer_file()
-    if f.exists():
-        with open(f, "r", encoding="utf-8") as fp:
+    if POINTER_FILE.exists():
+        with open(POINTER_FILE, "r", encoding="utf-8") as fp:
             return json.load(fp)
     return {}
 
 
 def write_pointer(data: dict):
-    with open(get_pointer_file(), "w", encoding="utf-8") as f:
+    POINTER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(POINTER_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
@@ -165,10 +160,11 @@ def _split_recursive(text: str, chunk_size: int, overlap: int, separators: list)
 
     for para in paragraphs:
         if len(para) <= chunk_size:
-            _add_segment(current, para, chunk_size, overlap, chunks)
+            if current:
+                _add_segment(current, para, chunk_size, overlap, chunks)
+            current = _update_current(current, para, chunk_size, overlap)
             if para == paragraphs[-1]:
                 continue
-            current = _update_current(current, para, chunk_size, overlap)
             continue
 
         # 段落太长 → 先按句切
@@ -497,8 +493,7 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
 
     chunk_cfg = config.get_chunk_config(template_name)
 
-    base_dir = get_base_dir()
-    docs_dir = base_dir / config.DOCS_DIR
+    docs_dir = ROOT / config.DOCS_DIR
 
     mode = "全量重建" if full_rebuild else "增量更新"
     print("=" * 60)
@@ -525,7 +520,7 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
         print(f"  已连接 (心跳: {heartbeat} ns)")
     except Exception as e:
         print(f"  无法连接 ChromaDB Server: {e}")
-        print(f"  请先启动: start_chroma_server.bat")
+        print(f"  请先启动: python -m servers.chroma")
         return
     clean_old_shadows(chroma_client, collection_name)
 
@@ -542,7 +537,7 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
     print("\n[3/5] 加载文档...")
     documents = load_all_documents(docs_dir)
     if not documents:
-        print("没有找到任何文档，请将文件放入 docs/ 文件夹后重试。")
+        print("没有找到任何文档，请将文件放入 data/docs/ 文件夹后重试。")
         return
 
     # Step 4: 建库
@@ -556,7 +551,7 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
     print(f"\n" + "=" * 60)
     print(f"  建库完成！活跃集合: {active}: {count} 个向量，{len(documents)} 份文档")
     print(f"  ChromaDB Server: {config.CHROMA_SERVER_HOST}:{config.CHROMA_SERVER_PORT}")
-    print(f"  下一步: 启动 MCP 服务器 → python mcp_server.py")
+    print(f"  下一步: 启动 MCP 服务器 → python -m servers.mcp")
     print("=" * 60)
 
 

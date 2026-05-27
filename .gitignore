@@ -15,19 +15,22 @@ wheels/
 # Logs
 *.log
 
-# Docs (ignore all except placeholder)
-docs/*
-!docs/.gitkeep
-
-# Vector database (ignore all except placeholder)
-chroma_db/*
-!chroma_db/.gitkeep
+# Data (ignore all except placeholder)
+data/docs/*
+!data/docs/.gitkeep
+data/chroma_db/*
+!data/chroma_db/.gitkeep
+data/models/*
+!data/models/.gitkeep
 
 # Environment variables (contains real API keys)
 .env
 
 # Runtime generated files
-collection_pointer.json
+runtime/logs/
+runtime/state/
+!runtime/logs/.gitkeep
+!runtime/state/.gitkeep
 
 # Downloaded model files
 models/

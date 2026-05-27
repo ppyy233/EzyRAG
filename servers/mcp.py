@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-QwenKB V1.1 — MCP 服务器 (Client-Server 模式)
+QwenKB — MCP 服务器 (Client-Server 模式)
 通过 HTTP 暴露 search_knowledge_base 工具，供 opencode 等 MCP 客户端调用
 使用 AsyncHttpClient 连接 ChromaDB Server 实现异步查询
+
+用法: python -m servers.mcp
 """
 import os
 import sys
@@ -12,6 +14,9 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 import chromadb
 import uvicorn
 from fastapi import FastAPI, Request
@@ -20,14 +25,14 @@ import httpx
 
 import time as _time
 import config
-from lm_proxy import get_lm_proxy
+from core.embedder import get_lm_proxy
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         RotatingFileHandler(
-            str(Path(__file__).resolve().parent / "mcp_server.log"),
+            str(ROOT / "runtime" / "logs" / "mcp_server.log"),
             maxBytes=5 * 1024 * 1024,
             backupCount=3,
             encoding="utf-8",
@@ -36,29 +41,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("QwenKB-MCP")
 
-
-def get_base_dir():
-    return Path(__file__).resolve().parent
-
-
 app = FastAPI(title="QwenKB MCP Server", version="1.2.0")
 
 _oai_client = None
 _chroma_client = None
 _chroma_collection = None
 
-
-POINTER_FILE = "collection_pointer.json"
+POINTER_FILE = ROOT / "runtime" / "state" / "collection_pointer.json"
 _active_collection_name = None
+
 
 def get_active_collection_name() -> str:
     """读取指针文件中的活跃集合名"""
-    f = Path(__file__).resolve().parent / POINTER_FILE
-    if f.exists():
-        with open(f, "r", encoding="utf-8") as fp:
+    if POINTER_FILE.exists():
+        with open(POINTER_FILE, "r", encoding="utf-8") as fp:
             data = json.load(fp)
             return data.get(config.COLLECTION_NAME, config.COLLECTION_NAME)
     return config.COLLECTION_NAME
+
 
 async def get_chroma_client():
     global _chroma_client
