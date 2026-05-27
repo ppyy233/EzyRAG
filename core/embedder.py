@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Embedding 代理 — 优先级队列 + 工作线程
-确保建库和查询的 embedding 请求互不阻塞：
+Ezy-RAG V0.0.14 — Embedding 代理
+优先级队列 + 工作线程，确保建库和查询的 embedding 请求互不阻塞：
   - priority=0: MCP 查询 (VIP, 插队)
   - priority=100: 建库切片 (普通, 排队)
 
@@ -24,8 +24,6 @@ from openai import OpenAI
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-
-import settings  # 加载 .env
 
 logger = logging.getLogger("Embedder")
 

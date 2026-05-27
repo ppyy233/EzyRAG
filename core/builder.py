@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG — 知识库构建脚本 (Client-Server 模式)
+Ezy-RAG V0.0.14 — 知识库构建脚本 (Client-Server 模式)
 读取 data/docs/ 中的文档 → 中文友好切片 → 调用 Embedding 服务向量化 → 存入 ChromaDB Server
 
 支持：PDF / Word / TXT / 代码文件等 30+ 格式
@@ -18,50 +18,18 @@ from datetime import datetime
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import settings  # 加载 .env
+from config.settings import get_docs_dir, get_collection_name, get_chunk_config, get_chunk_templates
 import chromadb
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 
 from core.embedder import get_lm_proxy
 
-# 代码常量
-DOCS_DIR = "data/docs"
-COLLECTION_NAME = "default_collection"
-CHUNK_TEMPLATES = {
-    "academic": {
-        "name": "英文文献专用",
-        "chunk_size": 2000,
-        "overlap": 200,
-        "strategy": "recursive",
-        "separators": ["\n\n", "\n", "\r\n", "。", ". ", "！", "?", "？", "!", "；", ";", "，", ",", "、", " ", ""],
-    },
-    "chinese": {
-        "name": "中文专用",
-        "chunk_size": 1500,
-        "overlap": 150,
-        "strategy": "recursive",
-        "separators": ["\n\n", "\n", "。", "！", "？", "；", "，", "、", " ", ""],
-    },
-    "code": {
-        "name": "数据分析/代码专用",
-        "chunk_size": 3000,
-        "overlap": 300,
-        "strategy": "flat",
-        "separators": ["\n\n\n", "\n\n", "\n", ". ", " ", ""],
-    },
-}
+# 从配置文件读取
+DOCS_DIR = get_docs_dir()
+COLLECTION_NAME = get_collection_name()
 
 POINTER_FILE = ROOT / "runtime" / "state" / "collection_pointer.json"
-
-
-def get_chunk_config(template_name: str = None) -> dict:
-    """返回当前激活的切块模板配置"""
-    default_template = os.getenv("CHUNK_TEMPLATE", "academic")
-    name = template_name or default_template
-    if name not in CHUNK_TEMPLATES:
-        name = "academic"
-    return CHUNK_TEMPLATES[name]
 
 
 def read_pointer() -> dict:
@@ -592,13 +560,14 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
 
 
 if __name__ == "__main__":
+    chunk_templates = get_chunk_templates()
     parser = argparse.ArgumentParser(description="Ezy-RAG 知识库构建工具")
     parser.add_argument("--collection", "-c", type=str, default=None,
                         help=f"集合标识 (默认: {COLLECTION_NAME})")
     parser.add_argument("--full", action="store_true",
                         help="全量重建（影子集合 + 原子切换）")
     parser.add_argument("--template", "-t", type=str, default=None,
-                        help=f"切块模板 (可选: {', '.join(CHUNK_TEMPLATES.keys())})")
+                        help=f"切块模板 (可选: {', '.join(chunk_templates.keys())})")
     args = parser.parse_args()
     build_knowledge_base(collection_name=args.collection, full_rebuild=args.full,
                          template_name=args.template)

@@ -25,7 +25,16 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+LOG_DIR = ROOT / "runtime" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_DIR / "rerank.log", encoding="utf-8")
+    ]
+)
 logger = logging.getLogger("RerankServer")
 
 app = FastAPI(title="Ezy-RAG Rerank Server", version="0.0.14")
@@ -48,8 +57,24 @@ def detect_device():
 
 def load_model(model_name: str = None):
     global _model
+    
+    # 从配置读取模型路径
     if model_name is None:
-        model_name = str(ROOT / "data" / "models" / "bge-reranker")
+        model_name = str(ROOT / "data" / "models")
+    
+    # 检查模型文件是否存在
+    model_path = Path(model_name)
+    if not model_path.exists():
+        logger.error(f"模型目录不存在: {model_path}")
+        logger.info(f"请下载模型文件到: {model_path}")
+        sys.exit(1)
+    
+    config_file = model_path / "config.json"
+    if not config_file.exists():
+        logger.error(f"模型配置文件不存在: {config_file}")
+        logger.info(f"请确保模型文件完整")
+        sys.exit(1)
+    
     logger.info(f"加载重排模型: {model_name}")
     from sentence_transformers import CrossEncoder
     device = detect_device()

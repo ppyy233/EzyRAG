@@ -25,6 +25,7 @@ data/models/*
 
 # Environment variables (contains real API keys)
 .env
+config/.env
 
 # Runtime generated files
 runtime/logs/
@@ -34,3 +35,6 @@ runtime/state/
 
 # Downloaded model files
 models/
+
+# Backup files
+*.backup

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG — MCP 服务器 (Client-Server 模式)
+Ezy-RAG V0.0.14 — MCP 服务器 (Client-Server 模式)
 通过 HTTP 暴露 search_knowledge_base 工具，供 opencode 等 MCP 客户端调用
 使用 AsyncHttpClient 连接 ChromaDB Server 实现异步查询
 
@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import settings  # 加载 .env
+from config.settings import get_collection_name, get_retrieval_config
 import chromadb
 import uvicorn
 from fastapi import FastAPI, Request
@@ -27,10 +27,11 @@ import httpx
 import time as _time
 from core.embedder import get_lm_proxy
 
-# 代码常量
-COLLECTION_NAME = "default_collection"
-RETRIEVAL_K = 5
-RETRIEVAL_FETCH_K = 15
+# 从配置文件读取
+COLLECTION_NAME = get_collection_name()
+RETRIEVAL_CONFIG = get_retrieval_config()
+RETRIEVAL_K = RETRIEVAL_CONFIG["k"]
+RETRIEVAL_FETCH_K = RETRIEVAL_CONFIG["fetch_k"]
 
 logging.basicConfig(
     level=logging.INFO,

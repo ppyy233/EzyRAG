@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG — ChromaDB Server 启动脚本
+Ezy-RAG V0.0.14 — ChromaDB Server 启动脚本
 用法: python -m servers.chroma
 """
 import os
@@ -11,13 +11,13 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
 sys.path.insert(0, str(ROOT))
 
-import settings  # 加载 .env
+from config.settings import get_chroma_dir
 import uvicorn
 from chromadb.server.fastapi import FastAPI
 from chromadb.config import Settings
 
-# 代码常量
-CHROMA_DIR = "data/chroma_db"
+# 从配置文件读取
+CHROMA_DIR = get_chroma_dir()
 
 s = Settings(
     chroma_server_host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),

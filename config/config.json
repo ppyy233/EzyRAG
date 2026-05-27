@@ -1,0 +1,50 @@
+{
+  "collection": {
+    "name": "default_collection"
+  },
+  "docs": {
+    "dir": "data/docs"
+  },
+  "chroma": {
+    "dir": "data/chroma_db"
+  },
+  "chunk": {
+    "templates": {
+      "academic": {
+        "name": "英文文献专用",
+        "chunk_size": 2000,
+        "overlap": 200,
+        "strategy": "recursive",
+        "separators": ["\n\n", "\n", "\r\n", "。", ". ", "！", "?", "？", "!", "；", ";", "，", ",", "、", " ", ""]
+      },
+      "chinese": {
+        "name": "中文专用",
+        "chunk_size": 1500,
+        "overlap": 150,
+        "strategy": "recursive",
+        "separators": ["\n\n", "\n", "。", "！", "？", "；", "，", "、", " ", ""]
+      },
+      "code": {
+        "name": "数据分析/代码专用",
+        "chunk_size": 3000,
+        "overlap": 300,
+        "strategy": "flat",
+        "separators": ["\n\n\n", "\n\n", "\n", ". ", " ", ""]
+      },
+      "custom": {
+        "name": "自定义模板",
+        "chunk_size": 1000,
+        "overlap": 100,
+        "strategy": "recursive",
+        "separators": ["\n\n", "\n", " ", ""]
+      }
+    },
+    "default_template": "academic"
+  },
+  "retrieval": {
+    "k": 5,
+    "fetch_k": 15,
+    "lambda": 0.7,
+    "threshold": 0.3
+  }
+}
