@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-QwenKB — 知识库构建脚本 (Client-Server 模式)
-读取 data/docs/ 中的文档 → 中文友好切片 → 调用 LM Studio 向量化 → 存入 ChromaDB Server
+Ezy-RAG — 知识库构建脚本 (Client-Server 模式)
+读取 data/docs/ 中的文档 → 中文友好切片 → 调用 Embedding 服务向量化 → 存入 ChromaDB Server
 
 支持：PDF / Word / TXT / 代码文件等 30+ 格式
 
@@ -18,14 +18,50 @@ from datetime import datetime
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import settings  # 加载 .env
 import chromadb
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 
-import config
 from core.embedder import get_lm_proxy
 
+# 代码常量
+DOCS_DIR = "data/docs"
+COLLECTION_NAME = "default_collection"
+CHUNK_TEMPLATES = {
+    "academic": {
+        "name": "英文文献专用",
+        "chunk_size": 2000,
+        "overlap": 200,
+        "strategy": "recursive",
+        "separators": ["\n\n", "\n", "\r\n", "。", ". ", "！", "?", "？", "!", "；", ";", "，", ",", "、", " ", ""],
+    },
+    "chinese": {
+        "name": "中文专用",
+        "chunk_size": 1500,
+        "overlap": 150,
+        "strategy": "recursive",
+        "separators": ["\n\n", "\n", "。", "！", "？", "；", "，", "、", " ", ""],
+    },
+    "code": {
+        "name": "数据分析/代码专用",
+        "chunk_size": 3000,
+        "overlap": 300,
+        "strategy": "flat",
+        "separators": ["\n\n\n", "\n\n", "\n", ". ", " ", ""],
+    },
+}
+
 POINTER_FILE = ROOT / "runtime" / "state" / "collection_pointer.json"
+
+
+def get_chunk_config(template_name: str = None) -> dict:
+    """返回当前激活的切块模板配置"""
+    default_template = os.getenv("CHUNK_TEMPLATE", "academic")
+    name = template_name or default_template
+    if name not in CHUNK_TEMPLATES:
+        name = "academic"
+    return CHUNK_TEMPLATES[name]
 
 
 def read_pointer() -> dict:
@@ -42,9 +78,9 @@ def write_pointer(data: dict):
 
 
 def get_active_collection(config_key: str) -> str:
-    """读取指针文件中配置的当前活跃集合名，没有则回退到 config 默认"""
+    """读取指针文件中配置的当前活跃集合名，没有则回退到默认"""
     p = read_pointer()
-    return p.get(config_key, config.COLLECTION_NAME)
+    return p.get(config_key, COLLECTION_NAME)
 
 
 def set_active_collection(config_key: str, name: str):
@@ -328,7 +364,7 @@ def chunk_documents(documents: List[dict], chunk_cfg: dict) -> List[dict]:
 
 
 def batch_add(collection, chunks, emb_proxy, add_batch_size=50, total=None):
-    """批量向量化 + 入库（通过 LM Studio 代理，支持优先级调度）"""
+    """批量向量化 + 入库（通过 Embedding 代理，支持优先级调度）"""
     if total is None:
         total = len(chunks)
     for i in range(0, len(chunks), add_batch_size):
@@ -489,15 +525,15 @@ def build_incremental(collection_key: str, chroma_client, documents, emb_proxy, 
 
 def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False, template_name: str = None):
     if collection_name is None:
-        collection_name = config.COLLECTION_NAME
+        collection_name = COLLECTION_NAME
 
-    chunk_cfg = config.get_chunk_config(template_name)
+    chunk_cfg = get_chunk_config(template_name)
 
-    docs_dir = ROOT / config.DOCS_DIR
+    docs_dir = ROOT / DOCS_DIR
 
     mode = "全量重建" if full_rebuild else "增量更新"
     print("=" * 60)
-    print(f"  QwenKB V1.2 — 知识库构建 ({mode})")
+    print(f"  Ezy-RAG V0.0.14 — 知识库构建 ({mode})")
     print(f"  切块模板: {chunk_cfg['name']} ({chunk_cfg['strategy']}, {chunk_cfg['chunk_size']}字)")
     print("=" * 60)
 
@@ -506,14 +542,14 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
         docs_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n文档目录: {docs_dir}")
-    print(f"ChromaDB Server: {config.CHROMA_SERVER_HOST}:{config.CHROMA_SERVER_PORT}")
+    print(f"ChromaDB Server: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
     print(f"集合标识: {collection_name}")
 
     # Step 1: 清理 + 连接
     print("\n[1/5] 连接 ChromaDB Server...")
     chroma_client = chromadb.HttpClient(
-        host=config.CHROMA_SERVER_HOST,
-        port=config.CHROMA_SERVER_PORT,
+        host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
+        port=int(os.getenv("CHROMA_SERVER_PORT", "9898")),
     )
     try:
         heartbeat = chroma_client.heartbeat()
@@ -524,13 +560,13 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
         return
     clean_old_shadows(chroma_client, collection_name)
 
-    # Step 2: 获取 LM Studio 代理
-    print("\n[2/5] 初始化 LM Studio 代理...")
+    # Step 2: 获取 Embedding 代理
+    print("\n[2/5] 初始化 Embedding 代理...")
     try:
         emb_proxy = get_lm_proxy()
         print(f"  代理就绪 (模型: {emb_proxy._model})")
     except Exception as e:
-        print(f"  无法连接 LM Studio: {e}")
+        print(f"  无法连接 Embedding 服务: {e}")
         return
 
     # Step 3: 加载文档
@@ -550,19 +586,19 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
     active = get_active_collection(collection_name)
     print(f"\n" + "=" * 60)
     print(f"  建库完成！活跃集合: {active}: {count} 个向量，{len(documents)} 份文档")
-    print(f"  ChromaDB Server: {config.CHROMA_SERVER_HOST}:{config.CHROMA_SERVER_PORT}")
+    print(f"  ChromaDB Server: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
     print(f"  下一步: 启动 MCP 服务器 → python -m servers.mcp")
     print("=" * 60)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="QwenKB 知识库构建工具")
+    parser = argparse.ArgumentParser(description="Ezy-RAG 知识库构建工具")
     parser.add_argument("--collection", "-c", type=str, default=None,
-                        help=f"集合标识 (默认: {config.COLLECTION_NAME})")
+                        help=f"集合标识 (默认: {COLLECTION_NAME})")
     parser.add_argument("--full", action="store_true",
                         help="全量重建（影子集合 + 原子切换）")
     parser.add_argument("--template", "-t", type=str, default=None,
-                        help=f"切块模板 (可选: {', '.join(config.CHUNK_TEMPLATES.keys())})")
+                        help=f"切块模板 (可选: {', '.join(CHUNK_TEMPLATES.keys())})")
     args = parser.parse_args()
     build_knowledge_base(collection_name=args.collection, full_rebuild=args.full,
                          template_name=args.template)

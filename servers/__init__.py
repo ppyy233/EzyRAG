@@ -1,4 +1,4 @@
 # -*- coding: utf-8 -*-
 """
-QwenKB 服务启动模块
+Ezy-RAG 服务启动模块
 """

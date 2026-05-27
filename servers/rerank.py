@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-QwenKB — 本地 BGE Rerank HTTP 服务
+Ezy-RAG — 本地 BGE Rerank HTTP 服务
 加载 BGE cross-encoder 模型，暴露 POST /rerank 接口
 
 用法:
@@ -28,7 +28,7 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("RerankServer")
 
-app = FastAPI(title="QwenKB Rerank Server", version="1.0.0")
+app = FastAPI(title="Ezy-RAG Rerank Server", version="0.0.14")
 
 _model = None
 
@@ -77,7 +77,7 @@ async def rerank(req: RerankRequest):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="QwenKB 本地 Rerank 服务")
+    parser = argparse.ArgumentParser(description="Ezy-RAG 本地 Rerank 服务")
     parser.add_argument("--port", type=int, default=5001)
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--model", type=str, default=None)

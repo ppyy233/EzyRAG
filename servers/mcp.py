@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-QwenKB — MCP 服务器 (Client-Server 模式)
+Ezy-RAG — MCP 服务器 (Client-Server 模式)
 通过 HTTP 暴露 search_knowledge_base 工具，供 opencode 等 MCP 客户端调用
 使用 AsyncHttpClient 连接 ChromaDB Server 实现异步查询
 
@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import settings  # 加载 .env
 import chromadb
 import uvicorn
 from fastapi import FastAPI, Request
@@ -24,8 +25,12 @@ from fastapi.responses import JSONResponse
 import httpx
 
 import time as _time
-import config
 from core.embedder import get_lm_proxy
+
+# 代码常量
+COLLECTION_NAME = "default_collection"
+RETRIEVAL_K = 5
+RETRIEVAL_FETCH_K = 15
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,9 +44,9 @@ logging.basicConfig(
         )
     ],
 )
-logger = logging.getLogger("QwenKB-MCP")
+logger = logging.getLogger("Ezy-RAG-MCP")
 
-app = FastAPI(title="QwenKB MCP Server", version="1.2.0")
+app = FastAPI(title="Ezy-RAG MCP Server", version="0.0.14")
 
 _oai_client = None
 _chroma_client = None
@@ -56,16 +61,16 @@ def get_active_collection_name() -> str:
     if POINTER_FILE.exists():
         with open(POINTER_FILE, "r", encoding="utf-8") as fp:
             data = json.load(fp)
-            return data.get(config.COLLECTION_NAME, config.COLLECTION_NAME)
-    return config.COLLECTION_NAME
+            return data.get(COLLECTION_NAME, COLLECTION_NAME)
+    return COLLECTION_NAME
 
 
 async def get_chroma_client():
     global _chroma_client
     if _chroma_client is None:
         _chroma_client = await chromadb.AsyncHttpClient(
-            host=config.CHROMA_SERVER_HOST,
-            port=config.CHROMA_SERVER_PORT,
+            host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
+            port=int(os.getenv("CHROMA_SERVER_PORT", "9898")),
         )
     return _chroma_client
 
@@ -78,29 +83,29 @@ async def get_collection_async():
         try:
             _chroma_collection = await client.get_collection(name=current)
         except Exception:
-            logger.warning(f"指针集合 {current} 不存在，回退到 {config.COLLECTION_NAME}")
+            logger.warning(f"指针集合 {current} 不存在，回退到 {COLLECTION_NAME}")
             _chroma_collection = await client.get_or_create_collection(
-                name=config.COLLECTION_NAME,
+                name=COLLECTION_NAME,
                 metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100000},
             )
-            current = config.COLLECTION_NAME
+            current = COLLECTION_NAME
         _active_collection_name = current
         logger.info(f"活跃集合: {current}")
     return _chroma_collection
 
 
 async def check_lm_studio_health() -> tuple[bool, str]:
-    base_url = config.EMBEDDING_API_URL.rsplit("/v1/", 1)[0]
+    base_url = os.getenv("EMBEDDING_API_URL", "http://127.0.0.1:5000/v1/embeddings").rsplit("/v1/", 1)[0]
     try:
         async with httpx.AsyncClient(timeout=3) as c:
             r = await c.get(f"{base_url}/v1/models", headers={
-                "Authorization": f"Bearer {config.EMBEDDING_API_KEY}"
+                "Authorization": f"Bearer {os.getenv('EMBEDDING_API_KEY', '')}"
             })
             if r.status_code == 200:
                 return True, ""
-            return False, f"LM Studio 返回状态码 {r.status_code}"
+            return False, f"Embedding 服务返回状态码 {r.status_code}"
     except Exception as e:
-        return False, f"LM Studio 未启动或不可访问: {e}"
+        return False, f"Embedding 服务未启动或不可访问: {e}"
 
 
 _health_cache = {"ok": False, "err": "", "last_check": 0.0}
@@ -120,18 +125,19 @@ async def check_lm_studio_cached():
 
 
 async def embed_query_async(query: str) -> list[float]:
-    """异步向量化——通过 LM Studio 代理，VIP 优先级"""
+    """异步向量化——通过 Embedding 代理，VIP 优先级"""
     proxy = get_lm_proxy()
     vectors = await proxy.embed_async([query], priority=0)
     return vectors[0]
 
 
 async def rerank_async(query: str, documents: list[str]) -> list[float]:
-    """调用重排 API（本地 rerank_server 或云端），返回分数列表"""
-    url = config.RERANK_API_URL.rstrip("/") + "/rerank"
+    """调用重排 API，返回分数列表"""
+    url = os.getenv("RERANK_API_URL", "http://127.0.0.1:5001").rstrip("/") + "/rerank"
     headers = {"Content-Type": "application/json"}
-    if config.RERANK_API_KEY:
-        headers["Authorization"] = f"Bearer {config.RERANK_API_KEY}"
+    rerank_key = os.getenv("RERANK_API_KEY", "")
+    if rerank_key:
+        headers["Authorization"] = f"Bearer {rerank_key}"
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, json={"query": query, "documents": documents}, headers=headers)
         r.raise_for_status()
@@ -141,14 +147,14 @@ async def rerank_async(query: str, documents: list[str]) -> list[float]:
 async def search_async(query: str) -> str:
     ok, err = await check_lm_studio_cached()
     if not ok:
-        return f"[错误] {err}\n请启动 LM Studio 并加载 Qwen3-Embedding 模型后重试。"
+        return f"[错误] {err}\n请启动 Embedding 服务后重试。"
 
     try:
         query_vec = await embed_query_async(query)
         collection = await get_collection_async()
 
-        do_rerank = config.RERANK_ENABLED
-        fetch_k = config.RETRIEVAL_FETCH_K if do_rerank else config.RETRIEVAL_K
+        do_rerank = os.getenv("RERANK_ENABLED", "false").lower() == "true"
+        fetch_k = RETRIEVAL_FETCH_K if do_rerank else RETRIEVAL_K
 
         results = await collection.query(
             query_embeddings=[query_vec],
@@ -164,22 +170,22 @@ async def search_async(query: str) -> str:
         metas = results["metadatas"][0]
         dists = results["distances"][0]
 
-        if do_rerank and len(docs) > config.RETRIEVAL_K:
+        if do_rerank and len(docs) > RETRIEVAL_K:
             try:
                 scores = await rerank_async(query, docs)
                 ranked = sorted(zip(range(len(docs)), scores), key=lambda x: x[1], reverse=True)
-                top_indices = [i for i, _ in ranked[:config.RETRIEVAL_K]]
+                top_indices = [i for i, _ in ranked[:RETRIEVAL_K]]
                 ids = [ids[i] for i in top_indices]
                 docs = [docs[i] for i in top_indices]
                 metas = [metas[i] for i in top_indices]
                 dists = [dists[i] for i in top_indices]
-                logger.info(f"重排完成，取 top-{config.RETRIEVAL_K}")
+                logger.info(f"重排完成，取 top-{RETRIEVAL_K}")
             except Exception as e:
                 logger.warning(f"重排失败，使用原始结果: {e}")
-                docs = docs[:config.RETRIEVAL_K]
-                metas = metas[:config.RETRIEVAL_K]
-                dists = dists[:config.RETRIEVAL_K]
-                ids = ids[:config.RETRIEVAL_K]
+                docs = docs[:RETRIEVAL_K]
+                metas = metas[:RETRIEVAL_K]
+                dists = dists[:RETRIEVAL_K]
+                ids = ids[:RETRIEVAL_K]
 
         parts = [f"找到 {len(docs)} 条相关文档:\n"]
         if do_rerank:
@@ -213,9 +219,9 @@ async def health_check():
         db_count = 0
     return {
         "status": "ok",
-        "lm_studio": {"online": ok, "error": err},
+        "embedding_service": {"online": ok, "error": err},
         "chromadb": {
-            "server": f"{config.CHROMA_SERVER_HOST}:{config.CHROMA_SERVER_PORT}",
+            "server": f"{os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}",
             "collection": get_active_collection_name(),
             "documents": db_count,
         },
@@ -288,7 +294,7 @@ async def mcp_endpoint(request: Request):
             "id": req_id,
             "result": {
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "QwenKB", "version": "1.2.0"},
+                "serverInfo": {"name": "Ezy-RAG", "version": "0.0.14"},
                 "capabilities": {"tools": {}}
             }
         })
@@ -305,17 +311,17 @@ async def mcp_endpoint(request: Request):
 
 
 def main():
-    logger.info("QwenKB MCP Server V1.2.0 启动中...")
-    logger.info(f"LM Studio: {config.EMBEDDING_API_URL}")
-    logger.info(f"ChromaDB Server: {config.CHROMA_SERVER_HOST}:{config.CHROMA_SERVER_PORT}")
-    logger.info(f"监听: http://{config.MCP_SERVER_HOST}:{config.MCP_SERVER_PORT}")
+    logger.info("Ezy-RAG MCP Server V0.0.14 启动中...")
+    logger.info(f"Embedding 服务: {os.getenv('EMBEDDING_API_URL', 'http://127.0.0.1:5000/v1/embeddings')}")
+    logger.info(f"ChromaDB Server: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
+    logger.info(f"监听: http://{os.getenv('MCP_SERVER_HOST', '127.0.0.1')}:{os.getenv('MCP_SERVER_PORT', '9766')}")
 
     async def startup_checks():
         ok, err = await check_lm_studio_health()
         if ok:
-            logger.info("LM Studio: 在线")
+            logger.info("Embedding 服务: 在线")
         else:
-            logger.warning(f"LM Studio: {err}")
+            logger.warning(f"Embedding 服务: {err}")
 
         try:
             client = await get_chroma_client()
@@ -328,8 +334,8 @@ def main():
 
     uvicorn.run(
         app,
-        host=config.MCP_SERVER_HOST,
-        port=config.MCP_SERVER_PORT,
+        host=os.getenv("MCP_SERVER_HOST", "127.0.0.1"),
+        port=int(os.getenv("MCP_SERVER_PORT", "9766")),
         log_level="info",
     )
 
