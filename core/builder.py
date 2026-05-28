@@ -352,13 +352,13 @@ def build_incremental(collection_key: str, chroma_client, documents, emb_proxy, 
     stats = repo.sync(documents, chunk_cfg)
 
     # 输出结果
-    total_ops = stats["added"] + stats["updated"] + stats["deleted"]
+    total_ops = stats["added"] + stats["updated"] + stats["deleted_vectors"]
     if total_ops == 0:
         print(f"\n  无变化，跳过建库（{stats['unchanged']} 个文件未变）")
         return repo.count()
 
     print(f"\n  新增: {stats['added']} chunks  更新: {stats['updated']} chunks"
-          f"  未变: {stats['unchanged']}  删除: {stats['deleted']} 个文件")
+          f"  未变: {stats['unchanged']}  删除: {stats['deleted_vectors']} 个文件")
     print(f"  更新完成! 集合当前: {repo.count()} 条记录")
     return repo.count()
 
