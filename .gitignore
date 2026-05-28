@@ -18,6 +18,8 @@ wheels/
 # Data (ignore all except placeholder)
 data/docs/*
 !data/docs/.gitkeep
+data/web/*
+!data/web/.gitkeep
 data/chroma_db/*
 !data/chroma_db/.gitkeep
 data/models/*
