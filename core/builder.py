@@ -331,164 +331,50 @@ def chunk_documents(documents: List[dict], chunk_cfg: dict) -> List[dict]:
     return all_chunks
 
 
-def batch_add(collection, chunks, emb_proxy, add_batch_size=50, total=None):
-    """批量向量化 + 入库（通过 Embedding 代理，支持优先级调度）"""
-    if total is None:
-        total = len(chunks)
-    for i in range(0, len(chunks), add_batch_size):
-        batch = chunks[i:i + add_batch_size]
-        ids = [c["id"] for c in batch]
-        texts = [c["text"] for c in batch]
-        metas = [{"source": c["source"], "chunk_index": c["chunk_index"],
-                  "content_hash": c["content_hash"]} for c in batch]
-        embeddings = emb_proxy.embed_sync(texts, priority=100)
-        collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metas)
-        done = i + len(batch)
-        pct = min(100, int(done / total * 100))
-        print(f"  进度: {done}/{total} ({pct}%)")
-        if i + add_batch_size < len(chunks):
-            time.sleep(0.1)
 
-
-def build_full(collection_key: str, chroma_client, documents, emb_proxy, chunk_cfg: dict):
-    """
-    全量重建 — 影子集合模式
-    1. 建影子集合 {name}_{timestamp}
-    2. 全部 add
-    3. 更新指针 → 查询立即可用新集合
-    4. 删旧集合（有空再清理）
-    """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    shadow_name = f"{collection_key}_v{timestamp}"
-
-    print(f"\n  影子集合: {shadow_name}")
-
-    try:
-        chroma_client.delete_collection(shadow_name)
-    except Exception:
-        pass
-
-    shadow = chroma_client.create_collection(
-        name=shadow_name,
-        metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100000},
-    )
-
-    all_chunks = chunk_documents(documents, chunk_cfg)
-    print(f"  共切出 {len(all_chunks)} 个文本块")
-
-    try:
-        batch_add(shadow, all_chunks, emb_proxy, total=len(all_chunks))
-    except (Exception, KeyboardInterrupt):
-        print("\n  建库中断，回滚——清理影子集合")
-        chroma_client.delete_collection(shadow_name)
-        raise
-
-    count = shadow.count()
-    print(f"\n  影子集合完成: {count} 条")
-
-    # 原子切换：更新指针
-    old = get_active_collection(collection_key)
-    set_active_collection(collection_key, shadow_name)
-    print(f"  已切换: {old} → {shadow_name}")
-
-    # 异步清理旧集合
-    try:
-        if old and old != shadow_name:
-            chroma_client.delete_collection(old)
-            print(f"  已清理旧集合: {old}")
-    except Exception as e:
-        print(f"  清理旧集合失败 (可手动删除): {e}")
-
-    return count
 
 
 def build_incremental(collection_key: str, chroma_client, documents, emb_proxy, chunk_cfg: dict):
     """
-    增量更新 — 影子集合模式
-    1. 读旧集合全部数据（含向量）
-    2. 分类文件：未变 / 新增+变更 / 已删
-    3. 建影子集合：未变文件直接 copy 旧向量
-    4. embed + add 新/变文件
-    5. 指针原子切换 → 删旧集合
+    增量更新 — 通过 Repository 实现文档级 CRUD
+    1. 新文件 → add
+    2. 变更文件 → update (Add-First 策略)
+    3. 未变文件 → 跳过（零开销）
+    4. 已删文件 → delete
     """
-    current = get_active_collection(collection_key)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    shadow_name = f"{collection_key}_v{timestamp}"
+    collection = get_or_create_collection(chroma_client, collection_key)
+    from core.repository import DocumentRepository
+    repo = DocumentRepository(collection, emb_proxy)
 
-    print(f"  影子集合: {shadow_name}")
+    print(f"  集合: {collection.name} ({repo.count()} 条记录)")
 
-    # Step 1: 获取旧集合元数据
+    # 执行同步
+    stats = repo.sync(documents, chunk_cfg)
+
+    # 输出结果
+    total_ops = stats["added"] + stats["updated"] + stats["deleted"]
+    if total_ops == 0:
+        print(f"\n  无变化，跳过建库（{stats['unchanged']} 个文件未变）")
+        return repo.count()
+
+    print(f"\n  新增: {stats['added']} chunks  更新: {stats['updated']} chunks"
+          f"  未变: {stats['unchanged']}  删除: {stats['deleted']} 个文件")
+    print(f"  更新完成! 集合当前: {repo.count()} 条记录")
+    return repo.count()
+
+
+def get_or_create_collection(chroma_client, collection_key: str):
+    """获取或创建集合"""
+    collection_name = get_active_collection(collection_key)
     try:
-        active = chroma_client.get_collection(name=current)
+        return chroma_client.get_collection(name=collection_name)
     except Exception:
-        print("  旧集合不存在，按全量重建")
-        return build_full(collection_key, chroma_client, documents, emb_proxy, chunk_cfg)
-
-    # 先只取 metadata（轻量），做 hash 对比
-    try:
-        meta_result = active.get(include=["metadatas"])
-        existing_metas = meta_result["metadatas"] if meta_result and meta_result["ids"] else []
-        existing_ids = meta_result["ids"] if meta_result and meta_result["ids"] else []
-    except Exception:
-        existing_metas = []
-        existing_ids = []
-
-    # Step 2: 分类文件
-    stored_hashes = {}
-    for meta in existing_metas:
-        src = meta.get("source", "")
-        stored_hashes[src] = meta.get("content_hash", "")
-
-    new_docs = []
-    changed_docs = []
-    unchanged_count = 0
-    current_sources = {d["path"] for d in documents}
-
-    for doc in documents:
-        h = content_hash(doc["text"])
-        stored_h = stored_hashes.get(doc["path"], "")
-        if doc["path"] not in stored_hashes:
-            new_docs.append(doc)
-        elif not stored_h:
-            # 旧数据无 content_hash，按 chunk 数比较
-            old_chunk_count = sum(1 for m in existing_metas
-                                  if m.get("source") == doc["path"])
-            new_chunks = split_text(doc["text"], chunk_cfg)
-            if len(new_chunks) != old_chunk_count:
-                changed_docs.append(doc)
-            else:
-                unchanged_count += 1
-        elif stored_h != h:
-            changed_docs.append(doc)
-        else:
-            unchanged_count += 1
-
-    all_changed = new_docs + changed_docs
-    changed_sources = {d["path"] for d in all_changed}
-    deleted_sources = set(stored_hashes.keys()) - current_sources
-
-    print(f"  新文件: {len(new_docs)}  变更: {len(changed_docs)}"
-          f"  未变: {unchanged_count}  已删: {len(deleted_sources)}")
-
-    # Step 3: 建影子集合
-    try:
-        chroma_client.delete_collection(shadow_name)
-    except Exception:
-        pass
-
-    shadow = chroma_client.create_collection(
-        name=shadow_name,
-        metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100000},
-    )
-
-    # Step 4: 无变化 → 跳过
-    if not all_changed and not deleted_sources:
-        print(f"\n  无变化，跳过建库（{unchanged_count} 个文件未变）")
-        return active.count()
-
-    # 有变化 → 全量影子集合（1.5.9 get 带 embedding 不可靠，不复制向量）
-    print(f"  处理 {len(all_changed)} 个变化文件 + {unchanged_count} 个未变文件...")
-    return build_full(collection_key, chroma_client, documents, emb_proxy, chunk_cfg)
+        collection = chroma_client.get_or_create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100},
+        )
+        set_active_collection(collection_key, collection_name)
+        return collection
 
 
 def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False, template_name: str = None):

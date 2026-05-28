@@ -87,7 +87,7 @@ async def get_collection_async():
             logger.warning(f"指针集合 {current} 不存在，回退到 {COLLECTION_NAME}")
             _chroma_collection = await client.get_or_create_collection(
                 name=COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100000},
+                metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100},
             )
             current = COLLECTION_NAME
         _active_collection_name = current

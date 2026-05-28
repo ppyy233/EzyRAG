@@ -15,28 +15,80 @@
         "chunk_size": 2000,
         "overlap": 200,
         "strategy": "recursive",
-        "separators": ["\n\n", "\n", "\r\n", "。", ". ", "！", "?", "？", "!", "；", ";", "，", ",", "、", " ", ""]
+        "separators": [
+          "\n\n",
+          "\n",
+          "\r\n",
+          "。",
+          ". ",
+          "！",
+          "?",
+          "？",
+          "!",
+          "；",
+          ";",
+          "，",
+          ",",
+          "、",
+          " ",
+          ""
+        ]
       },
       "chinese": {
         "name": "中文专用",
         "chunk_size": 1500,
         "overlap": 150,
         "strategy": "recursive",
-        "separators": ["\n\n", "\n", "。", "！", "？", "；", "，", "、", " ", ""]
+        "separators": [
+          "\n\n",
+          "\n",
+          "。",
+          "！",
+          "？",
+          "；",
+          "，",
+          "、",
+          " ",
+          ""
+        ]
       },
       "code": {
         "name": "数据分析/代码专用",
         "chunk_size": 3000,
         "overlap": 300,
         "strategy": "flat",
-        "separators": ["\n\n\n", "\n\n", "\n", ". ", " ", ""]
+        "separators": [
+          "\n\n\n",
+          "\n\n",
+          "\n",
+          ". ",
+          " ",
+          ""
+        ]
       },
       "custom": {
         "name": "自定义模板",
         "chunk_size": 1000,
         "overlap": 100,
         "strategy": "recursive",
-        "separators": ["\n\n", "\n", " ", ""]
+        "separators": [
+          "\n\n",
+          "\n",
+          " ",
+          ""
+        ]
+      },
+      "ceshiceshi": {
+        "name": "自定义模板 - ceshiceshi",
+        "chunk_size": 100,
+        "overlap": 50,
+        "strategy": "recursive",
+        "separators": [
+          "\n\n",
+          "\n",
+          " ",
+          ""
+        ]
       }
     },
     "default_template": "academic"
