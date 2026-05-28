@@ -134,15 +134,86 @@ async def embed_query_async(query: str) -> list[float]:
 
 async def rerank_async(query: str, documents: list[str]) -> list[float]:
     """调用重排 API，返回分数列表"""
-    url = os.getenv("RERANK_API_URL", "http://127.0.0.1:5001").rstrip("/") + "/rerank"
+    mode = os.getenv("RERANK_MODE", "local").lower()
+
+    if mode == "cloud":
+        # 云端模式：调用 Cohere/Jina 等云端 Rerank API
+        return await _rerank_cloud(query, documents)
+    else:
+        # 本地模式：调用本地 CrossEncoder 服务
+        return await _rerank_local(query, documents)
+
+
+async def _rerank_local(query: str, documents: list[str]) -> list[float]:
+    """本地 Rerank 服务"""
+    url = os.getenv("RERANK_LOCAL_URL", "http://127.0.0.1:5001").rstrip("/") + "/rerank"
     headers = {"Content-Type": "application/json"}
-    rerank_key = os.getenv("RERANK_API_KEY", "")
-    if rerank_key:
-        headers["Authorization"] = f"Bearer {rerank_key}"
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, json={"query": query, "documents": documents}, headers=headers)
         r.raise_for_status()
         return r.json()["scores"]
+
+
+async def _rerank_cloud(query: str, documents: list[str]) -> list[float]:
+    """云端 Rerank API（Cohere/Jina 等）"""
+    provider = os.getenv("RERANK_CLOUD_PROVIDER", "cohere").lower()
+    api_key = os.getenv("RERANK_CLOUD_API_KEY", "")
+    model = os.getenv("RERANK_CLOUD_MODEL", "rerank-multilingual-v3.0")
+
+    if provider == "cohere":
+        url = "https://api.cohere.com/v1/rerank"
+        payload = {
+            "query": query,
+            "documents": documents,
+            "model": model,
+            "top_n": len(documents),
+        }
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(url, json=payload, headers=headers)
+            r.raise_for_status()
+            data = r.json()
+            # Cohere 返回 {"results": [{"index": 0, "relevance_score": 0.9}, ...]}
+            scores = [0.0] * len(documents)
+            for item in data["results"]:
+                scores[item["index"]] = item["relevance_score"]
+            return scores
+
+    elif provider == "jina":
+        url = "https://api.jina.ai/v1/rerank"
+        payload = {
+            "query": query,
+            "documents": documents,
+            "model": model,
+        }
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(url, json=payload, headers=headers)
+            r.raise_for_status()
+            data = r.json()
+            # Jina 返回 {"results": [{"index": 0, "relevance_score": 0.9}, ...]}
+            scores = [0.0] * len(documents)
+            for item in data["results"]:
+                scores[item["index"]] = item["relevance_score"]
+            return scores
+
+    else:
+        # 自定义云端 API（兼容本地格式）
+        url = os.getenv("RERANK_CLOUD_URL", "").rstrip("/") + "/rerank"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(url, json={"query": query, "documents": documents}, headers=headers)
+            r.raise_for_status()
+            return r.json()["scores"]
 
 
 async def search_async(query: str) -> str:

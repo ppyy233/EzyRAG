@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — 配置加载模块
+Ezy-RAG V0.0.17 — 配置加载模块
 位于 config/ 目录下，负责加载 .env 和 config.json
 """
 import os
@@ -75,3 +75,59 @@ def get_retrieval_config() -> dict:
     """获取检索配置"""
     config = load_config()
     return config["retrieval"]
+
+
+def get_embedding_mode() -> str:
+    """获取 Embedding 模式：local / cloud"""
+    return os.getenv("EMBEDDING_MODE", "cloud").lower()
+
+
+def get_embedding_config() -> dict:
+    """获取 Embedding 配置"""
+    mode = get_embedding_mode()
+
+    if mode == "local":
+        return {
+            "mode": "local",
+            "url": os.getenv("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings"),
+            "model": os.getenv("EMBEDDING_LOCAL_MODEL", "text-embedding-qwen3-embedding-4b"),
+            "dim": int(os.getenv("EMBEDDING_LOCAL_DIM", "2560")),
+        }
+    else:
+        return {
+            "mode": "cloud",
+            "provider": os.getenv("EMBEDDING_CLOUD_PROVIDER", "siliconflow"),
+            "api_key": os.getenv("EMBEDDING_CLOUD_API_KEY", ""),
+            "model": os.getenv("EMBEDDING_CLOUD_MODEL", "BAAI/bge-m3"),
+            "dim": int(os.getenv("EMBEDDING_CLOUD_DIM", "1024")),
+            "url": os.getenv("EMBEDDING_CLOUD_URL", ""),
+        }
+
+
+def get_rerank_mode() -> str:
+    """获取 Rerank 模式：local / cloud"""
+    return os.getenv("RERANK_MODE", "cloud").lower()
+
+
+def get_rerank_enabled() -> bool:
+    """获取 Rerank 是否启用"""
+    return os.getenv("RERANK_ENABLED", "true").lower() == "true"
+
+
+def get_rerank_config() -> dict:
+    """获取 Rerank 配置"""
+    mode = get_rerank_mode()
+
+    if mode == "local":
+        return {
+            "mode": "local",
+            "url": os.getenv("RERANK_LOCAL_URL", "http://127.0.0.1:5001"),
+        }
+    else:
+        return {
+            "mode": "cloud",
+            "provider": os.getenv("RERANK_CLOUD_PROVIDER", "cohere"),
+            "api_key": os.getenv("RERANK_CLOUD_API_KEY", ""),
+            "model": os.getenv("RERANK_CLOUD_MODEL", "rerank-multilingual-v3.0"),
+            "url": os.getenv("RERANK_CLOUD_URL", ""),
+        }
