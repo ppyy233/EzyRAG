@@ -33,12 +33,16 @@ RETRIEVAL_CONFIG = get_retrieval_config()
 RETRIEVAL_K = RETRIEVAL_CONFIG["k"]
 RETRIEVAL_FETCH_K = RETRIEVAL_CONFIG["fetch_k"]
 
+# 创建日志目录
+LOG_DIR = ROOT / "runtime" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         RotatingFileHandler(
-            str(ROOT / "runtime" / "logs" / "mcp_server.log"),
+            str(LOG_DIR / "mcp_server.log"),
             maxBytes=5 * 1024 * 1024,
             backupCount=3,
             encoding="utf-8",
