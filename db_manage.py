@@ -34,6 +34,7 @@ import chromadb
 from config.settings import get_chunk_config, get_collection_name
 from core.embedder import get_lm_proxy
 from core.repository import DocumentRepository
+from core.builder import SUPPORTED_EXT
 
 
 def get_local_documents() -> List[str]:
@@ -236,9 +237,19 @@ def add_documents(file_paths: List[str]):
             print(f"  [FAIL] 文件不存在: {file_path}")
             continue
         
-        # 读取文件内容
+        # 检查文件格式是否支持
+        ext = full_path.suffix.lower()
+        if ext not in SUPPORTED_EXT:
+            print(f"  [SKIP] 不支持的文件格式: {file_path}")
+            continue
+        
+        # 读取文件内容（使用 builder.py 的读取函数）
         try:
-            text = full_path.read_text(encoding="utf-8")
+            reader_fn = SUPPORTED_EXT[ext]
+            text = reader_fn(str(full_path))
+            if not text or not text.strip():
+                print(f"  [SKIP] 文件内容为空: {file_path}")
+                continue
             doc_name = full_path.stem
             text = f"[文件名: {doc_name}]\n{text}"
         except Exception as e:
