@@ -38,3 +38,5 @@ models/
 
 # Backup files
 *.backup
+
+frontend/node_modules/
