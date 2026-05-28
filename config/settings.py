@@ -47,6 +47,12 @@ def get_docs_dir() -> str:
     return config["docs"]["dir"]
 
 
+def get_web_dir() -> str:
+    """获取网页数据目录"""
+    config = load_config()
+    return config.get("web", {}).get("dir", "data/web")
+
+
 def get_chroma_dir() -> str:
     """获取 ChromaDB 数据目录"""
     config = load_config()

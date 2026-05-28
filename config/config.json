@@ -5,6 +5,9 @@
   "docs": {
     "dir": "data/docs"
   },
+  "web": {
+    "dir": "data/web"
+  },
   "chroma": {
     "dir": "data/chroma_db"
   },

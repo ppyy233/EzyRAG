@@ -302,6 +302,37 @@ def check_dependencies() -> list:
     return errors
 
 
+def check_orphan_records():
+    """检查孤立记录"""
+    try:
+        import chromadb
+        from config.settings import get_collection_name
+        from core.embedder import get_lm_proxy
+        from core.repository import DocumentRepository
+        
+        client = chromadb.HttpClient(
+            host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
+            port=int(os.getenv("CHROMA_SERVER_PORT", "9898")),
+        )
+        client.heartbeat()
+        
+        collection_name = get_collection_name()
+        collection = client.get_collection(name=collection_name)
+        emb_proxy = get_lm_proxy()
+        repo = DocumentRepository(collection, emb_proxy)
+        
+        docs_dir = str(ROOT / "data" / "docs")
+        orphans = repo.check_orphan_records(docs_dir)
+        
+        if orphans:
+            print(f"\n  ⚠ 检测到 {len(orphans)} 个孤立记录（本地文件已删除）")
+            print(f"  使用 'python db_manage.py clean' 命令清理")
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def main():
     """主函数"""
     chroma_host = os.getenv("CHROMA_SERVER_HOST", "127.0.0.1")
@@ -311,6 +342,9 @@ def main():
 
     rerank_enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
     rerank_mode = os.getenv("RERANK_MODE", "cloud")
+
+    # 启动时检查孤立记录
+    check_orphan_records()
 
     while True:
         print("\n" + "=" * 60)

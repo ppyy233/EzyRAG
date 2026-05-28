@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — 数据库管理脚本
+Ezy-RAG V0.0.17 — 数据库管理脚本
 用法: python db_manage.py
 
 功能：
 1. 查看文档映射表（本地文档 vs 向量库文档）
 2. 添加文档到向量库
-3. 从向量库删除文档
-4. 更新向量库中的文档
-5. 同步本地文件和向量库
-6. 全量重建向量库
-7. 启动服务
+3. 从向量库删除文档（保留本地文件）
+4. 删除本地文件（保留向量记录）
+5. 清理孤立向量记录
+6. 同步本地文件和向量库
+7. 全量重建向量库
+8. 添加网页内容到向量库
 """
 import subprocess
 import sys
@@ -101,6 +102,11 @@ def show_status():
         
         print(f"  集合名: {collection_name}")
         print(f"  总记录数: {repo.count()}")
+        
+        # 检查孤立记录
+        orphans = repo.check_orphan_records(str(ROOT / "data" / "docs"))
+        if orphans:
+            print(f"  ⚠ 孤立记录: {len(orphans)} 个（本地文件已删除）")
     except Exception as e:
         print(f"  集合不存在: {e}")
 
@@ -117,21 +123,64 @@ def list_documents():
     # 获取向量库文档
     vector_docs = get_vector_documents()
     
-    # 显示映射关系
-    print(f"\n  {'本地文件':<40} {'向量库状态':<10} {'chunks':<8}")
+    # 分类统计
+    local_file_docs = {k: v for k, v in vector_docs.items() if v.get("source_type") == "local_file"}
+    web_crawl_docs = {k: v for k, v in vector_docs.items() if v.get("source_type") == "web_crawl"}
+    other_docs = {k: v for k, v in vector_docs.items() if v.get("source_type") not in ["local_file", "web_crawl"]}
+    
+    # 显示本地文件映射
+    print(f"\n  本地文件映射：")
+    print(f"  {'文件名':<30} {'向量库状态':<10} {'chunks':<8} {'状态':<10}")
     print(f"  {'-'*60}")
     
     for doc in local_docs:
         doc_name = Path(doc).name
-        if doc in vector_docs:
-            chunks = vector_docs[doc]["chunks"]
-            print(f"  {doc_name:<40} {'已添加':<10} {chunks:<8}")
+        if doc in local_file_docs:
+            chunks = local_file_docs[doc]["chunks"]
+            print(f"  {doc_name:<30} {'已添加':<10} {chunks:<8} {'✓ 正常':<10}")
         else:
-            print(f"  {doc_name:<40} {'未添加':<10} {'-':<8}")
+            print(f"  {doc_name:<30} {'未添加':<10} {'-':<8} {'':10}")
     
-    print(f"  {'-'*60}")
+    # 显示孤立记录
+    orphans = [doc for doc in local_file_docs.values() if not Path(doc["source"]).exists()]
+    if orphans:
+        print(f"\n  孤立记录（本地文件已删除）：")
+        print(f"  {'文件名':<30} {'chunks':<8} {'创建时间':<20}")
+        print(f"  {'-'*60}")
+        for doc in orphans:
+            print(f"  {doc['source_name']:<30} {doc['chunks']:<8} {doc.get('created_at', '-'):<20}")
+    
+    # 显示网页爬取数据
+    if web_crawl_docs:
+        print(f"\n  网页爬取数据：")
+        print(f"  {'URL':<40} {'chunks':<8} {'创建时间':<20}")
+        print(f"  {'-'*70}")
+        for doc in web_crawl_docs.values():
+            url = doc["source"]
+            if len(url) > 38:
+                url = url[:35] + "..."
+            print(f"  {url:<40} {doc['chunks']:<8} {doc.get('created_at', '-'):<20}")
+    
+    # 显示其他数据
+    if other_docs:
+        print(f"\n  其他数据：")
+        print(f"  {'来源':<40} {'类型':<10} {'chunks':<8}")
+        print(f"  {'-'*60}")
+        for doc in other_docs.values():
+            source = doc["source"]
+            if len(source) > 38:
+                source = source[:35] + "..."
+            print(f"  {source:<40} {doc['source_type']:<10} {doc['chunks']:<8}")
+    
+    # 统计信息
+    print(f"\n  {'-'*60}")
     print(f"  本地文档: {len(local_docs)} 个")
     print(f"  向量库文档: {len(vector_docs)} 个, {sum(d['chunks'] for d in vector_docs.values())} 个 chunks")
+    print(f"    - 本地文件: {len(local_file_docs)} 个")
+    print(f"    - 网页爬取: {len(web_crawl_docs)} 个")
+    print(f"    - 其他: {len(other_docs)} 个")
+    if orphans:
+        print(f"  ⚠ 孤立记录: {len(orphans)} 个")
 
 
 def add_documents(file_paths: List[str]):
@@ -193,7 +242,7 @@ def add_documents(file_paths: List[str]):
         # 添加到向量库
         doc = {"path": file_path, "text": text}
         try:
-            count = repo.add(doc, chunk_cfg)
+            count = repo.add(doc, chunk_cfg, source_type="local_file")
             total_added += count
             print(f"  [OK] 添加成功: {file_path} ({count} chunks)")
         except Exception as e:
@@ -213,9 +262,10 @@ def add_all_documents():
     add_documents(local_docs)
 
 
-def delete_documents(file_paths: List[str]):
-    """从向量库删除指定文件"""
-    print(f"\n  从向量库删除文档...")
+def delete_vector_records(file_paths: List[str]):
+    """从向量库删除指定文件的记录（保留本地文件）"""
+    print(f"\n  从向量库删除文档记录...")
+    print(f"  注意：此操作只删除向量记录，本地文件不受影响")
     
     # 连接 ChromaDB
     try:
@@ -257,18 +307,108 @@ def delete_documents(file_paths: List[str]):
         except Exception as e:
             print(f"  [FAIL] 删除失败: {file_path} ({e})")
     
-    print(f"\n  删除完成! 共删除 {total_deleted} 个文档")
+    print(f"\n  删除完成! 共删除 {total_deleted} 个文档的向量记录")
 
 
-def delete_all_documents():
-    """从向量库删除所有文件"""
+def delete_all_vector_records():
+    """从向量库删除所有文件的记录"""
     vector_docs = get_vector_documents()
     if not vector_docs:
         print("  向量库为空")
         return
     
     print(f"  找到 {len(vector_docs)} 个向量库文档")
-    delete_documents(list(vector_docs.keys()))
+    print(f"  注意：此操作只删除向量记录，本地文件不受影响")
+    
+    confirm = input(f"  确认删除所有向量记录？(y/N): ").strip().lower()
+    if confirm != 'y':
+        print(f"  取消删除")
+        return
+    
+    delete_vector_records(list(vector_docs.keys()))
+
+
+def delete_local_files(file_paths: List[str]):
+    """删除本地文件（保留向量记录）"""
+    print(f"\n  删除本地文件...")
+    print(f"  注意：此操作只删除本地文件，向量记录将保留")
+    
+    total_deleted = 0
+    
+    for file_path in file_paths:
+        full_path = Path(file_path)
+        if not full_path.exists():
+            print(f"  [SKIP] 文件不存在: {file_path}")
+            continue
+        
+        try:
+            full_path.unlink()
+            total_deleted += 1
+            print(f"  [OK] 删除成功: {file_path}")
+        except Exception as e:
+            print(f"  [FAIL] 删除失败: {file_path} ({e})")
+    
+    print(f"\n  删除完成! 共删除 {total_deleted} 个本地文件")
+    print(f"  提示：向量记录已保留，可通过查询继续检索到这些内容")
+
+
+def clean_orphan_records():
+    """清理孤立向量记录"""
+    print(f"\n  清理孤立向量记录...")
+    
+    # 连接 ChromaDB
+    try:
+        client = chromadb.HttpClient(
+            host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
+            port=int(os.getenv("CHROMA_SERVER_PORT", "9898")),
+        )
+        client.heartbeat()
+    except Exception as e:
+        print(f"  无法连接 ChromaDB: {e}")
+        return
+    
+    # 获取 Embedding 代理
+    try:
+        emb_proxy = get_lm_proxy()
+    except Exception as e:
+        print(f"  无法连接 Embedding 服务: {e}")
+        return
+    
+    # 获取集合
+    collection_name = get_active_collection_name()
+    try:
+        collection = client.get_collection(name=collection_name)
+    except Exception as e:
+        print(f"  集合不存在: {e}")
+        return
+    
+    # 创建 Repository
+    repo = DocumentRepository(collection, emb_proxy)
+    
+    # 检查孤立记录
+    orphans = repo.check_orphan_records(str(ROOT / "data" / "docs"))
+    
+    if not orphans:
+        print(f"  没有孤立记录")
+        return
+    
+    # 显示孤立记录
+    print(f"\n  找到 {len(orphans)} 个孤立记录：")
+    print(f"  {'文件名':<30} {'chunks':<8} {'创建时间':<20}")
+    print(f"  {'-'*60}")
+    
+    for doc in orphans:
+        print(f"  {doc['source_name']:<30} {doc['chunks']:<8} {doc.get('created_at', '-'):<20}")
+    
+    # 用户确认
+    confirm = input(f"\n  确认清理这些孤立记录？(y/N): ").strip().lower()
+    if confirm != 'y':
+        print(f"  取消清理")
+        return
+    
+    # 执行清理
+    count = repo.clean_orphan_records(str(ROOT / "data" / "docs"))
+    print(f"\n  清理完成! 共清理 {count} 个孤立记录")
 
 
 def update_documents(file_paths: List[str]):
@@ -327,7 +467,7 @@ def update_documents(file_paths: List[str]):
         # 更新向量库
         doc = {"path": file_path, "text": text}
         try:
-            count = repo.update(doc, chunk_cfg)
+            count = repo.update(doc, chunk_cfg, source_type="local_file")
             total_updated += count
             print(f"  [OK] 更新成功: {file_path} ({count} chunks)")
         except Exception as e:
@@ -343,8 +483,15 @@ def update_all_documents():
         print("  向量库为空")
         return
     
-    print(f"  找到 {len(vector_docs)} 个向量库文档")
-    update_documents(list(vector_docs.keys()))
+    # 只更新本地文件类型的文档
+    local_file_docs = {k: v for k, v in vector_docs.items() if v.get("source_type") == "local_file"}
+    
+    if not local_file_docs:
+        print("  没有本地文件类型的向量记录")
+        return
+    
+    print(f"  找到 {len(local_file_docs)} 个本地文件类型的向量记录")
+    update_documents(list(local_file_docs.keys()))
 
 
 def sync_documents():
@@ -355,17 +502,21 @@ def sync_documents():
     local_docs = set(get_local_documents())
     
     # 获取向量库文档
-    vector_docs = set(get_vector_documents().keys())
+    vector_docs = get_vector_documents()
+    
+    # 只处理本地文件类型的向量记录
+    local_file_vector_docs = {k: v for k, v in vector_docs.items() if v.get("source_type") == "local_file"}
+    local_file_sources = set(local_file_vector_docs.keys())
     
     # 计算差异
-    new_docs = local_docs - vector_docs
-    deleted_docs = vector_docs - local_docs
+    new_docs = local_docs - local_file_sources
+    deleted_docs = local_file_sources - local_docs
     
     # 显示差异
     print(f"\n  同步预览:")
     print(f"  {'-'*40}")
     print(f"  新增: {len(new_docs)} 个文档")
-    print(f"  删除: {len(deleted_docs)} 个文档")
+    print(f"  已删除本地文件: {len(deleted_docs)} 个文档")
     print(f"  {'-'*40}")
     
     if not new_docs and not deleted_docs:
@@ -383,7 +534,10 @@ def sync_documents():
         add_documents(list(new_docs))
     
     if deleted_docs:
-        delete_documents(list(deleted_docs))
+        print(f"\n  注意：以下本地文件已删除，但向量记录将保留：")
+        for doc in deleted_docs:
+            print(f"    - {Path(doc).name}")
+        print(f"  如需清理这些孤立记录，请使用'清理孤立记录'功能")
     
     print(f"\n  同步完成!")
 
@@ -393,7 +547,7 @@ def rebuild_database():
     print(f"\n  全量重建向量库...")
     
     # 用户确认
-    confirm = input(f"  ⚠ 警告：这将清空向量库并重新添加所有文档！确认？(y/N): ").strip().lower()
+    confirm = input(f"  ⚠ 警告：这将清空向量库并重新添加所有本地文档！确认？(y/N): ").strip().lower()
     if confirm != 'y':
         print(f"  取消重建")
         return
@@ -423,10 +577,140 @@ def rebuild_database():
     print(f"\n  全量重建完成!")
 
 
+def add_web_content():
+    """添加网页内容到向量库"""
+    print(f"\n  添加网页内容到向量库...")
+    
+    url = input("  请输入网页 URL: ").strip()
+    if not url:
+        print("  URL 不能为空")
+        return
+    
+    # 连接 ChromaDB
+    try:
+        client = chromadb.HttpClient(
+            host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
+            port=int(os.getenv("CHROMA_SERVER_PORT", "9898")),
+        )
+        client.heartbeat()
+    except Exception as e:
+        print(f"  无法连接 ChromaDB: {e}")
+        return
+    
+    # 获取 Embedding 代理
+    try:
+        emb_proxy = get_lm_proxy()
+    except Exception as e:
+        print(f"  无法连接 Embedding 服务: {e}")
+        return
+    
+    # 获取集合
+    collection_name = get_active_collection_name()
+    try:
+        collection = client.get_or_create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100},
+        )
+    except Exception as e:
+        print(f"  无法创建集合: {e}")
+        return
+    
+    # 创建 Repository
+    repo = DocumentRepository(collection, emb_proxy)
+    
+    # 爬取网页内容
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        
+        print(f"  正在爬取网页内容...")
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        response.encoding = response.apparent_encoding
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 获取标题
+        title = soup.title.string if soup.title else url
+        
+        # 获取正文内容
+        # 移除 script 和 style 标签
+        for script in soup(["script", "style"]):
+            script.decompose()
+        
+        text = soup.get_text()
+        # 清理文本
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = ' '.join(chunk for chunk in chunks if chunk)
+        
+        if not text:
+            print(f"  网页内容为空")
+            return
+        
+        # 添加到向量库
+        doc = {
+            "path": url,
+            "text": f"[网页标题: {title}]\n[来源: {url}]\n{text}",
+            "title": title,
+        }
+        
+        chunk_cfg = get_chunk_config()
+        count = repo.add(doc, chunk_cfg, source_type="web_crawl")
+        
+        print(f"  [OK] 添加成功: {url} ({count} chunks)")
+        
+        # 保存到本地
+        web_dir = ROOT / "data" / "web"
+        web_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 使用 URL 的哈希作为文件名
+        import hashlib
+        url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
+        file_path = web_dir / f"{url_hash}.txt"
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(f"URL: {url}\n")
+            f.write(f"标题: {title}\n")
+            f.write(f"爬取时间: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"\n{'='*60}\n\n")
+            f.write(text)
+        
+        print(f"  已保存到本地: {file_path}")
+        
+    except ImportError:
+        print(f"  缺少依赖库，请运行: uv pip install requests beautifulsoup4")
+    except Exception as e:
+        print(f"  爬取网页失败: {e}")
+
+
 def start_services():
     """启动所有服务"""
     print("\n  启动所有服务...")
     subprocess.run([sys.executable, "start_all.py"], cwd=ROOT)
+
+
+def check_orphan_on_startup():
+    """启动时检查孤立记录"""
+    try:
+        client = chromadb.HttpClient(
+            host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
+            port=int(os.getenv("CHROMA_SERVER_PORT", "9898")),
+        )
+        client.heartbeat()
+        
+        collection_name = get_active_collection_name()
+        collection = client.get_collection(name=collection_name)
+        emb_proxy = get_lm_proxy()
+        repo = DocumentRepository(collection, emb_proxy)
+        
+        orphans = repo.check_orphan_records(str(ROOT / "data" / "docs"))
+        
+        if orphans:
+            print(f"\n  ⚠ 检测到 {len(orphans)} 个孤立记录（本地文件已删除）")
+            print(f"  使用 'python db_manage.py clean' 命令清理")
+    except Exception:
+        pass
 
 
 def main():
@@ -446,11 +730,19 @@ def main():
     add_parser = subparsers.add_parser("add", help="添加文档到向量库")
     add_parser.add_argument("files", nargs="*", help="文件路径")
     add_parser.add_argument("--all", action="store_true", help="添加所有本地文档")
+    add_parser.add_argument("--web", action="store_true", help="添加网页内容")
     
     # delete 命令
-    delete_parser = subparsers.add_parser("delete", help="从向量库删除文档")
+    delete_parser = subparsers.add_parser("delete", help="删除向量记录（保留本地文件）")
     delete_parser.add_argument("files", nargs="*", help="文件路径")
-    delete_parser.add_argument("--all", action="store_true", help="删除所有向量库文档")
+    delete_parser.add_argument("--all", action="store_true", help="删除所有向量记录")
+    
+    # delete-local 命令
+    delete_local_parser = subparsers.add_parser("delete-local", help="删除本地文件（保留向量记录）")
+    delete_local_parser.add_argument("files", nargs="*", help="文件路径")
+    
+    # clean 命令
+    subparsers.add_parser("clean", help="清理孤立向量记录")
     
     # update 命令
     update_parser = subparsers.add_parser("update", help="更新向量库中的文档")
@@ -468,24 +760,36 @@ def main():
     
     args = parser.parse_args()
     
+    # 启动时检查孤立记录
+    check_orphan_on_startup()
+    
     if args.command == "list":
         list_documents()
     elif args.command == "status":
         show_status()
     elif args.command == "add":
-        if args.all:
+        if args.web:
+            add_web_content()
+        elif args.all:
             add_all_documents()
         elif args.files:
             add_documents(args.files)
         else:
-            print("  请指定文件路径或使用 --all 参数")
+            print("  请指定文件路径或使用 --all/--web 参数")
     elif args.command == "delete":
         if args.all:
-            delete_all_documents()
+            delete_all_vector_records()
         elif args.files:
-            delete_documents(args.files)
+            delete_vector_records(args.files)
         else:
             print("  请指定文件路径或使用 --all 参数")
+    elif args.command == "delete-local":
+        if args.files:
+            delete_local_files(args.files)
+        else:
+            print("  请指定文件路径")
+    elif args.command == "clean":
+        clean_orphan_records()
     elif args.command == "update":
         if args.all:
             update_all_documents()
@@ -503,19 +807,22 @@ def main():
         # 交互式菜单
         while True:
             print("\n" + "=" * 60)
-            print("  Ezy-RAG V0.0.14 — 数据库管理")
+            print("  Ezy-RAG V0.0.17 — 数据库管理")
             print("=" * 60)
             print("1. 查看文档映射表")
             print("2. 查看数据库状态")
             print("3. 添加文档")
-            print("4. 删除文档")
-            print("5. 更新文档")
-            print("6. 同步本地文件和向量库")
-            print("7. 全量重建向量库")
-            print("8. 启动服务")
-            print("9. 退出")
+            print("4. 删除向量记录（保留本地文件）")
+            print("5. 删除本地文件（保留向量记录）")
+            print("6. 清理孤立向量记录")
+            print("7. 更新文档")
+            print("8. 同步本地文件和向量库")
+            print("9. 全量重建向量库")
+            print("10. 添加网页内容")
+            print("11. 启动服务")
+            print("12. 退出")
             
-            choice = input("\n请选择 (1-9): ").strip()
+            choice = input("\n请选择 (1-12): ").strip()
             
             if choice == "1":
                 list_documents()
@@ -525,9 +832,10 @@ def main():
                 print("\n添加文档：")
                 print("1. 添加指定文件")
                 print("2. 添加所有本地文件")
-                print("3. 返回")
+                print("3. 添加网页内容")
+                print("4. 返回")
                 
-                sub_choice = input("\n请选择 (1-3): ").strip()
+                sub_choice = input("\n请选择 (1-4): ").strip()
                 
                 if sub_choice == "1":
                     files = input("请输入文件路径（多个文件用空格分隔）: ").strip().split()
@@ -536,14 +844,16 @@ def main():
                 elif sub_choice == "2":
                     add_all_documents()
                 elif sub_choice == "3":
+                    add_web_content()
+                elif sub_choice == "4":
                     continue
                 else:
                     print("无效的选择")
             
             elif choice == "4":
-                print("\n删除文档：")
-                print("1. 删除指定文件")
-                print("2. 删除所有向量库文档")
+                print("\n删除向量记录（保留本地文件）：")
+                print("1. 删除指定文件的向量记录")
+                print("2. 删除所有向量记录")
                 print("3. 返回")
                 
                 sub_choice = input("\n请选择 (1-3): ").strip()
@@ -551,15 +861,34 @@ def main():
                 if sub_choice == "1":
                     files = input("请输入文件路径（多个文件用空格分隔）: ").strip().split()
                     if files:
-                        delete_documents(files)
+                        delete_vector_records(files)
                 elif sub_choice == "2":
-                    delete_all_documents()
+                    delete_all_vector_records()
                 elif sub_choice == "3":
                     continue
                 else:
                     print("无效的选择")
             
             elif choice == "5":
+                print("\n删除本地文件（保留向量记录）：")
+                print("1. 删除指定本地文件")
+                print("2. 返回")
+                
+                sub_choice = input("\n请选择 (1-2): ").strip()
+                
+                if sub_choice == "1":
+                    files = input("请输入文件路径（多个文件用空格分隔）: ").strip().split()
+                    if files:
+                        delete_local_files(files)
+                elif sub_choice == "2":
+                    continue
+                else:
+                    print("无效的选择")
+            
+            elif choice == "6":
+                clean_orphan_records()
+            
+            elif choice == "7":
                 print("\n更新文档：")
                 print("1. 更新指定文件")
                 print("2. 更新所有向量库文档")
@@ -578,13 +907,15 @@ def main():
                 else:
                     print("无效的选择")
             
-            elif choice == "6":
-                sync_documents()
-            elif choice == "7":
-                rebuild_database()
             elif choice == "8":
-                start_services()
+                sync_documents()
             elif choice == "9":
+                rebuild_database()
+            elif choice == "10":
+                add_web_content()
+            elif choice == "11":
+                start_services()
+            elif choice == "12":
                 break
             else:
                 print("无效的选择")
