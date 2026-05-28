@@ -20,8 +20,8 @@ from chromadb.config import Settings
 CHROMA_DIR = get_chroma_dir()
 
 s = Settings(
-    chroma_server_host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
-    chroma_server_http_port=int(os.getenv("CHROMA_SERVER_PORT", "9898")),
+    chroma_server_host=os.getenv("CHROMA_SERVER_HOST") or "127.0.0.1",
+    chroma_server_http_port=int(os.getenv("CHROMA_SERVER_PORT") or "9898"),
     persist_directory=str(ROOT / CHROMA_DIR),
     is_persistent=True,
     anonymized_telemetry=False,
@@ -30,4 +30,4 @@ server = FastAPI(s)
 app = server.app()
 
 if __name__ == "__main__":
-    uvicorn.run(app, host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"), port=int(os.getenv("CHROMA_SERVER_PORT", "9898")))
+    uvicorn.run(app, host=os.getenv("CHROMA_SERVER_HOST") or "127.0.0.1", port=int(os.getenv("CHROMA_SERVER_PORT") or "9898"))

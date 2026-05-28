@@ -70,8 +70,8 @@ async def get_chroma_client():
     global _chroma_client
     if _chroma_client is None:
         _chroma_client = await chromadb.AsyncHttpClient(
-            host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
-            port=int(os.getenv("CHROMA_SERVER_PORT", "9898")),
+            host=os.getenv("CHROMA_SERVER_HOST") or "127.0.0.1",
+            port=int(os.getenv("CHROMA_SERVER_PORT") or "9898"),
         )
     return _chroma_client
 
@@ -335,8 +335,8 @@ def main():
 
     uvicorn.run(
         app,
-        host=os.getenv("MCP_SERVER_HOST", "127.0.0.1"),
-        port=int(os.getenv("MCP_SERVER_PORT", "9766")),
+        host=os.getenv("MCP_SERVER_HOST") or "127.0.0.1",
+        port=int(os.getenv("MCP_SERVER_PORT") or "9766"),
         log_level="info",
     )
 

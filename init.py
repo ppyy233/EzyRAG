@@ -38,26 +38,45 @@ def save_env(env: dict):
 
         # Embedding 模型配置
         f.write("# ----- Embedding 模型配置 -----\n")
-        for key in ["EMBEDDING_API_URL", "EMBEDDING_API_KEY", "EMBEDDING_MODEL", "EMBEDDING_DIM"]:
-            f.write(f"{key}={env.get(key, '')}\n")
+        embedding_defaults = {
+            "EMBEDDING_API_URL": "http://127.0.0.1:5000/v1/embeddings",
+            "EMBEDDING_API_KEY": "",
+            "EMBEDDING_MODEL": "text-embedding-qwen3-embedding-4b",
+            "EMBEDDING_DIM": "2560"
+        }
+        for key, default in embedding_defaults.items():
+            f.write(f"{key}={env.get(key, default)}\n")
         f.write("\n")
 
         # Rerank 模型配置
         f.write("# ----- Rerank 模型配置 -----\n")
-        for key in ["RERANK_ENABLED", "RERANK_API_URL", "RERANK_API_KEY"]:
-            f.write(f"{key}={env.get(key, '')}\n")
+        rerank_defaults = {
+            "RERANK_ENABLED": "true",
+            "RERANK_API_URL": "http://127.0.0.1:5001",
+            "RERANK_API_KEY": ""
+        }
+        for key, default in rerank_defaults.items():
+            f.write(f"{key}={env.get(key, default)}\n")
         f.write("\n")
 
         # ChromaDB 服务配置
         f.write("# ----- ChromaDB 服务配置 -----\n")
-        for key in ["CHROMA_SERVER_HOST", "CHROMA_SERVER_PORT"]:
-            f.write(f"{key}={env.get(key, '')}\n")
+        chroma_defaults = {
+            "CHROMA_SERVER_HOST": "127.0.0.1",
+            "CHROMA_SERVER_PORT": "9898"
+        }
+        for key, default in chroma_defaults.items():
+            f.write(f"{key}={env.get(key, default)}\n")
         f.write("\n")
 
         # MCP 服务配置
         f.write("# ----- MCP 服务配置 -----\n")
-        for key in ["MCP_SERVER_HOST", "MCP_SERVER_PORT"]:
-            f.write(f"{key}={env.get(key, '')}\n")
+        mcp_defaults = {
+            "MCP_SERVER_HOST": "127.0.0.1",
+            "MCP_SERVER_PORT": "9766"
+        }
+        for key, default in mcp_defaults.items():
+            f.write(f"{key}={env.get(key, default)}\n")
         f.write("\n")
 
         # 切块策略
@@ -117,16 +136,16 @@ def update_env():
     if choice == "1":
         # 更新 Embedding 服务配置
         print("\n当前 Embedding 服务配置：")
-        print(f"  EMBEDDING_API_URL={env.get('EMBEDDING_API_URL', '')}")
+        print(f"  EMBEDDING_API_URL={env.get('EMBEDDING_API_URL', 'http://127.0.0.1:5000/v1/embeddings')}")
         print(f"  EMBEDDING_API_KEY=****")
-        print(f"  EMBEDDING_MODEL={env.get('EMBEDDING_MODEL', '')}")
-        print(f"  EMBEDDING_DIM={env.get('EMBEDDING_DIM', '')}")
+        print(f"  EMBEDDING_MODEL={env.get('EMBEDDING_MODEL', 'text-embedding-qwen3-embedding-4b')}")
+        print(f"  EMBEDDING_DIM={env.get('EMBEDDING_DIM', '2560')}")
 
         print("\n输入新值（直接回车跳过）：")
-        env['EMBEDDING_API_URL'] = input(f"EMBEDDING_API_URL [{env.get('EMBEDDING_API_URL', '')}]: ").strip() or env.get('EMBEDDING_API_URL', '')
+        env['EMBEDDING_API_URL'] = input(f"EMBEDDING_API_URL [{env.get('EMBEDDING_API_URL', 'http://127.0.0.1:5000/v1/embeddings')}]: ").strip() or env.get('EMBEDDING_API_URL', 'http://127.0.0.1:5000/v1/embeddings')
         env['EMBEDDING_API_KEY'] = input(f"EMBEDDING_API_KEY [****]: ").strip() or env.get('EMBEDDING_API_KEY', '')
-        env['EMBEDDING_MODEL'] = input(f"EMBEDDING_MODEL [{env.get('EMBEDDING_MODEL', '')}]: ").strip() or env.get('EMBEDDING_MODEL', '')
-        env['EMBEDDING_DIM'] = input(f"EMBEDDING_DIM [{env.get('EMBEDDING_DIM', '')}]: ").strip() or env.get('EMBEDDING_DIM', '')
+        env['EMBEDDING_MODEL'] = input(f"EMBEDDING_MODEL [{env.get('EMBEDDING_MODEL', 'text-embedding-qwen3-embedding-4b')}]: ").strip() or env.get('EMBEDDING_MODEL', 'text-embedding-qwen3-embedding-4b')
+        env['EMBEDDING_DIM'] = input(f"EMBEDDING_DIM [{env.get('EMBEDDING_DIM', '2560')}]: ").strip() or env.get('EMBEDDING_DIM', '2560')
 
         save_env(env)
         print("\n✓ Embedding 服务配置已更新")
@@ -135,12 +154,12 @@ def update_env():
         # 更新 Rerank 服务配置
         print("\n当前 Rerank 服务配置：")
         print(f"  RERANK_ENABLED={env.get('RERANK_ENABLED', 'true')}")
-        print(f"  RERANK_API_URL={env.get('RERANK_API_URL', '')}")
+        print(f"  RERANK_API_URL={env.get('RERANK_API_URL', 'http://127.0.0.1:5001')}")
         print(f"  RERANK_API_KEY=****")
 
         print("\n输入新值（直接回车跳过）：")
         env['RERANK_ENABLED'] = input(f"RERANK_ENABLED [{env.get('RERANK_ENABLED', 'true')}]: ").strip() or env.get('RERANK_ENABLED', 'true')
-        env['RERANK_API_URL'] = input(f"RERANK_API_URL [{env.get('RERANK_API_URL', '')}]: ").strip() or env.get('RERANK_API_URL', '')
+        env['RERANK_API_URL'] = input(f"RERANK_API_URL [{env.get('RERANK_API_URL', 'http://127.0.0.1:5001')}]: ").strip() or env.get('RERANK_API_URL', 'http://127.0.0.1:5001')
         env['RERANK_API_KEY'] = input(f"RERANK_API_KEY [****]: ").strip() or env.get('RERANK_API_KEY', '')
 
         save_env(env)
