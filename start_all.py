@@ -214,11 +214,11 @@ def show_status():
 
     embedding_mode = os.getenv("EMBEDDING_MODE", "cloud")
     rerank_enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
-    rerank_mode = os.getenv("RERANK_MODE", "cloud")
+    rerank_mode = os.getenv("RERANK_MODE", "local")
 
     print("\n服务状态：")
     print("-" * 70)
-    print(f"{'服务':<20} {'状态':<10} {'PID':<10} {'端口':<10}")
+    print(f"{'服务':<20} {'状态':<10} {'PID':<10} {'端口/配置':<10}")
     print("-" * 70)
 
     # Embedding 服务
@@ -232,8 +232,13 @@ def show_status():
         embedding_status = "运行中" if check_service("127.0.0.1", embedding_port) else "未运行"
         print(f"{'Embedding (本地)':<20} {embedding_status:<10} {'-':<10} {embedding_port:<10}")
     else:
-        provider = os.getenv("EMBEDDING_CLOUD_PROVIDER", "siliconflow")
-        print(f"{'Embedding (云端)':<20} {'已配置':<10} {'-':<10} {provider:<10}")
+        embedding_url = os.getenv("EMBEDDING_CLOUD_URL", "https://api.siliconflow.cn/v1/embeddings")
+        # 提取域名
+        try:
+            domain = embedding_url.split("//")[1].split("/")[0]
+        except:
+            domain = "unknown"
+        print(f"{'Embedding (云端)':<20} {'已配置':<10} {'-':<10} {domain:<10}")
 
     # ChromaDB
     chroma_status = "运行中" if check_service(chroma_host, chroma_port) else "未运行"
@@ -269,12 +274,64 @@ def show_status():
                 rerank_pid = "-"
             print(f"{'Rerank (本地)':<20} {rerank_status:<10} {rerank_pid:<10} {rerank_port:<10}")
         else:
-            provider = os.getenv("RERANK_CLOUD_PROVIDER", "cohere")
-            print(f"{'Rerank (云端)':<20} {'已配置':<10} {'-':<10} {provider:<10}")
+            rerank_url = os.getenv("RERANK_CLOUD_URL", "https://api.cohere.com/v1/rerank")
+            # 提取域名
+            try:
+                domain = rerank_url.split("//")[1].split("/")[0]
+            except:
+                domain = "unknown"
+            print(f"{'Rerank (云端)':<20} {'已配置':<10} {'-':<10} {domain:<10}")
     else:
         print(f"{'Rerank':<20} {'未启用':<10} {'-':<10} {'-':<10}")
 
     print("-" * 70)
+
+
+def show_config():
+    """显示当前配置"""
+    print("\n当前配置：")
+    print("-" * 60)
+    
+    # Embedding 配置
+    embedding_mode = os.getenv("EMBEDDING_MODE", "cloud")
+    print(f"Embedding 模式: {embedding_mode}")
+    if embedding_mode == "cloud":
+        print(f"  URL: {os.getenv('EMBEDDING_CLOUD_URL', 'https://api.siliconflow.cn/v1/embeddings')}")
+        api_key = os.getenv('EMBEDDING_CLOUD_API_KEY', '')
+        if api_key:
+            print(f"  API Key: ****{api_key[-4:]}")
+        else:
+            print(f"  API Key: 未配置")
+        print(f"  模型: {os.getenv('EMBEDDING_CLOUD_MODEL', 'BAAI/bge-m3')}")
+        print(f"  维度: {os.getenv('EMBEDDING_CLOUD_DIM', '1024')}")
+    else:
+        print(f"  URL: {os.getenv('EMBEDDING_LOCAL_URL', 'http://127.0.0.1:1234/v1/embeddings')}")
+        print(f"  模型: {os.getenv('EMBEDDING_LOCAL_MODEL', 'text-embedding-qwen3-embedding-4b')}")
+        print(f"  维度: {os.getenv('EMBEDDING_LOCAL_DIM', '2560')}")
+    
+    # Rerank 配置
+    rerank_enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
+    print(f"\nRerank 启用: {rerank_enabled}")
+    if rerank_enabled:
+        rerank_mode = os.getenv("RERANK_MODE", "local")
+        print(f"  模式: {rerank_mode}")
+        if rerank_mode == "cloud":
+            print(f"  URL: {os.getenv('RERANK_CLOUD_URL', 'https://api.cohere.com/v1/rerank')}")
+            api_key = os.getenv('RERANK_CLOUD_API_KEY', '')
+            if api_key:
+                print(f"  API Key: ****{api_key[-4:]}")
+            else:
+                print(f"  API Key: 未配置")
+            print(f"  模型: {os.getenv('RERANK_CLOUD_MODEL', 'rerank-multilingual-v3.0')}")
+        else:
+            print(f"  URL: {os.getenv('RERANK_LOCAL_URL', 'http://127.0.0.1:5001')}")
+    
+    # 服务配置
+    print(f"\nChromaDB: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
+    print(f"MCP: {os.getenv('MCP_SERVER_HOST', '127.0.0.1')}:{os.getenv('MCP_SERVER_PORT', '9766')}")
+    
+    # 切块策略
+    print(f"\n切块策略: {os.getenv('CHUNK_TEMPLATE', 'academic')}")
 
 
 def check_dependencies() -> list:
@@ -341,7 +398,7 @@ def main():
     mcp_port = int(os.getenv("MCP_SERVER_PORT", "9766"))
 
     rerank_enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
-    rerank_mode = os.getenv("RERANK_MODE", "cloud")
+    rerank_mode = os.getenv("RERANK_MODE", "local")
 
     # 启动时检查孤立记录
     check_orphan_records()
@@ -351,17 +408,22 @@ def main():
         print("  Ezy-RAG V0.0.17 — 服务管理")
         print("=" * 60)
         print("1. 查看服务状态")
-        print("2. 启动服务")
-        print("3. 停止服务")
-        print("4. 重启服务")
-        print("5. 退出")
+        print("2. 查看当前配置")
+        print("3. 启动服务")
+        print("4. 停止服务")
+        print("5. 重启服务")
+        print("6. 修改配置（调用 init.py）")
+        print("7. 退出")
 
-        choice = input("\n请选择 (1-5): ").strip()
+        choice = input("\n请选择 (1-7): ").strip()
 
         if choice == "1":
             show_status()
 
         elif choice == "2":
+            show_config()
+
+        elif choice == "3":
             print("\n启动服务：")
             print("1. 启动所有服务")
             print("2. 启动 ChromaDB")
@@ -412,7 +474,7 @@ def main():
             else:
                 print("无效的选择")
 
-        elif choice == "3":
+        elif choice == "4":
             print("\n停止服务：")
             print("1. 停止所有服务")
             print("2. 停止 ChromaDB")
@@ -446,7 +508,7 @@ def main():
             else:
                 print("无效的选择")
 
-        elif choice == "4":
+        elif choice == "5":
             print("\n重启服务：")
             print("1. 重启所有服务")
             print("2. 重启 ChromaDB")
@@ -501,7 +563,13 @@ def main():
             else:
                 print("无效的选择")
 
-        elif choice == "5":
+        elif choice == "6":
+            # 调用 init.py
+            subprocess.run([sys.executable, "init.py"], cwd=ROOT)
+            # 重新加载环境变量
+            load_dotenv(ROOT / "config" / ".env", override=True)
+
+        elif choice == "7":
             # 停止所有服务
             for name in list(PROCESSES.keys()):
                 stop_service(name)

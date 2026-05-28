@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Ezy-RAG V0.0.17 — Embedding 代理
-支持本地/云端两种模式，兼容多种API格式：
+支持本地/云端两种模式，统一 OpenAI 兼容格式：
   - 本地模式：LM Studio、Ollama 等本地服务
-  - 云端模式：OpenAI、SiliconFlow、自定义 API
+  - 云端模式：OpenAI、SiliconFlow、DeepSeek 等云端 API
 
 优先级队列 + 工作线程，确保建库和查询的 embedding 请求互不阻塞：
   - priority=0: MCP 查询 (VIP, 插队)
@@ -33,15 +33,6 @@ logger = logging.getLogger("Embedder")
 
 _global_proxy = None
 _global_lock = threading.Lock()
-
-# 云端提供商 URL 映射
-CLOUD_URL_MAP = {
-    "openai": "https://api.openai.com/v1",
-    "siliconflow": "https://api.siliconflow.cn/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
-    "moonshot": "https://api.moonshot.cn/v1",
-}
 
 
 class EmbedderProxy:
@@ -119,44 +110,37 @@ def get_lm_proxy(api_key=None, base_url=None, model=None, dim=None):
         if _global_proxy is not None:
             return _global_proxy
 
-        # 读取模式配置
+        # 读取模式
         mode = os.getenv("EMBEDDING_MODE", "cloud").lower()
 
         if mode == "local":
-            # 本地模式：直接使用完整 URL
-            local_url = os.getenv("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings")
-            # 从 URL 中提取 base_url（去掉 /embeddings 后缀）
-            if local_url.endswith("/embeddings"):
-                base = local_url.rsplit("/embeddings", 1)[0]
-            elif local_url.endswith("/v1/embeddings"):
-                base = local_url.rsplit("/embeddings", 1)[0]
-            else:
-                base = local_url.rstrip("/")
-
-            _global_proxy = EmbedderProxy(
-                api_key="",
-                base_url=base,
-                model=model or os.getenv("EMBEDDING_LOCAL_MODEL", "text-embedding-qwen3-embedding-4b"),
-                dim=dim or int(os.getenv("EMBEDDING_LOCAL_DIM", "2560")),
-            )
-            logger.info(f"Embedding 本地模式: {base}")
+            # 本地模式
+            url = os.getenv("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings")
+            _api_key = ""
+            _model = model or os.getenv("EMBEDDING_LOCAL_MODEL", "text-embedding-qwen3-embedding-4b")
+            _dim = dim or int(os.getenv("EMBEDDING_LOCAL_DIM", "2560"))
+            logger.info(f"Embedding 本地模式: {url}")
         else:
             # 云端模式
-            provider = os.getenv("EMBEDDING_CLOUD_PROVIDER", "siliconflow").lower()
+            url = os.getenv("EMBEDDING_CLOUD_URL", "https://api.siliconflow.cn/v1/embeddings")
+            _api_key = api_key or os.getenv("EMBEDDING_CLOUD_API_KEY", "")
+            _model = model or os.getenv("EMBEDDING_CLOUD_MODEL", "BAAI/bge-m3")
+            _dim = dim or int(os.getenv("EMBEDDING_CLOUD_DIM", "1024"))
+            logger.info(f"Embedding 云端模式: {url}")
 
-            if base_url:
-                url = base_url.rstrip("/")
-            elif provider in CLOUD_URL_MAP:
-                url = CLOUD_URL_MAP[provider]
-            else:
-                url = os.getenv("EMBEDDING_CLOUD_URL", "https://api.siliconflow.cn/v1").rstrip("/")
+        # 从 URL 中提取 base_url（去掉 /embeddings 后缀）
+        if url.endswith("/embeddings"):
+            _base_url = url.rsplit("/embeddings", 1)[0]
+        elif url.endswith("/v1/embeddings"):
+            _base_url = url.rsplit("/embeddings", 1)[0]
+        else:
+            _base_url = url.rstrip("/")
 
-            _global_proxy = EmbedderProxy(
-                api_key=api_key or os.getenv("EMBEDDING_CLOUD_API_KEY", ""),
-                base_url=url,
-                model=model or os.getenv("EMBEDDING_CLOUD_MODEL", "BAAI/bge-m3"),
-                dim=dim or int(os.getenv("EMBEDDING_CLOUD_DIM", "1024")),
-            )
-            logger.info(f"Embedding 云端模式: {provider} @ {url}")
+        _global_proxy = EmbedderProxy(
+            api_key=_api_key,
+            base_url=_base_url,
+            model=_model,
+            dim=_dim,
+        )
 
         return _global_proxy

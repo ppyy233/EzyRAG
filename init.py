@@ -36,23 +36,22 @@ def save_env(env: dict):
         f.write("# 由 init.py 生成\n")
         f.write("# ============================================================\n\n")
 
-        # Embedding 模型配置
-        f.write("# ----- Embedding 模型配置 -----\n")
-        f.write("# 模式：local（本地 LM Studio/Ollama）/ cloud（云端 API）\n")
+        # Embedding 配置
+        f.write("# ----- Embedding 配置 -----\n")
+        f.write("# 模式：cloud（云端 API）/ local（本地服务）\n")
         f.write(f"EMBEDDING_MODE={env.get('EMBEDDING_MODE', 'cloud')}\n\n")
 
-        f.write("# 云端模式配置（openai/siliconflow/deepseek/zhipu/moonshot/custom）\n")
+        f.write("# 云端配置\n")
         cloud_embedding = {
-            "EMBEDDING_CLOUD_PROVIDER": "siliconflow",
+            "EMBEDDING_CLOUD_URL": "https://api.siliconflow.cn/v1/embeddings",
             "EMBEDDING_CLOUD_API_KEY": "",
             "EMBEDDING_CLOUD_MODEL": "BAAI/bge-m3",
-            "EMBEDDING_CLOUD_DIM": "1024",
-            "EMBEDDING_CLOUD_URL": ""
+            "EMBEDDING_CLOUD_DIM": "1024"
         }
         for key, default in cloud_embedding.items():
             f.write(f"{key}={env.get(key, default)}\n")
 
-        f.write("\n# 本地模式配置（LM Studio/Ollama 等）\n")
+        f.write("\n# 本地配置\n")
         local_embedding = {
             "EMBEDDING_LOCAL_URL": "http://127.0.0.1:1234/v1/embeddings",
             "EMBEDDING_LOCAL_MODEL": "text-embedding-qwen3-embedding-4b",
@@ -62,25 +61,24 @@ def save_env(env: dict):
             f.write(f"{key}={env.get(key, default)}\n")
         f.write("\n")
 
-        # Rerank 模型配置
-        f.write("# ----- Rerank 模型配置 -----\n")
+        # Rerank 配置
+        f.write("# ----- Rerank 配置 -----\n")
         f.write("# 是否启用 Rerank\n")
         f.write(f"RERANK_ENABLED={env.get('RERANK_ENABLED', 'true')}\n\n")
 
-        f.write("# 模式：local（本地 CrossEncoder）/ cloud（云端 API）\n")
-        f.write(f"RERANK_MODE={env.get('RERANK_MODE', 'cloud')}\n\n")
+        f.write("# 模式：cloud（云端 API）/ local（本地服务）\n")
+        f.write(f"RERANK_MODE={env.get('RERANK_MODE', 'local')}\n\n")
 
-        f.write("# 云端模式配置（cohere/jina/custom）\n")
+        f.write("# 云端配置\n")
         cloud_rerank = {
-            "RERANK_CLOUD_PROVIDER": "cohere",
+            "RERANK_CLOUD_URL": "https://api.cohere.com/v1/rerank",
             "RERANK_CLOUD_API_KEY": "",
-            "RERANK_CLOUD_MODEL": "rerank-multilingual-v3.0",
-            "RERANK_CLOUD_URL": ""
+            "RERANK_CLOUD_MODEL": "rerank-multilingual-v3.0"
         }
         for key, default in cloud_rerank.items():
             f.write(f"{key}={env.get(key, default)}\n")
 
-        f.write("\n# 本地模式配置\n")
+        f.write("\n# 本地配置\n")
         local_rerank = {
             "RERANK_LOCAL_URL": "http://127.0.0.1:5001"
         }
@@ -88,23 +86,15 @@ def save_env(env: dict):
             f.write(f"{key}={env.get(key, default)}\n")
         f.write("\n")
 
-        # ChromaDB 服务配置
-        f.write("# ----- ChromaDB 服务配置 -----\n")
-        chroma_defaults = {
+        # 服务配置
+        f.write("# ----- 服务配置 -----\n")
+        service_defaults = {
             "CHROMA_SERVER_HOST": "127.0.0.1",
-            "CHROMA_SERVER_PORT": "9898"
-        }
-        for key, default in chroma_defaults.items():
-            f.write(f"{key}={env.get(key, default)}\n")
-        f.write("\n")
-
-        # MCP 服务配置
-        f.write("# ----- MCP 服务配置 -----\n")
-        mcp_defaults = {
+            "CHROMA_SERVER_PORT": "9898",
             "MCP_SERVER_HOST": "127.0.0.1",
             "MCP_SERVER_PORT": "9766"
         }
-        for key, default in mcp_defaults.items():
+        for key, default in service_defaults.items():
             f.write(f"{key}={env.get(key, default)}\n")
         f.write("\n")
 
@@ -191,31 +181,7 @@ def update_embedding_config(env: dict):
 
     if mode_choice == "1":
         env['EMBEDDING_MODE'] = 'cloud'
-
-        # 选择云端提供商
-        print("\n选择云端提供商：")
-        print("1. SiliconFlow（默认）")
-        print("2. OpenAI")
-        print("3. DeepSeek")
-        print("4. 智谱 AI")
-        print("5. Moonshot")
-        print("6. 自定义")
-
-        provider_map = {
-            "1": "siliconflow",
-            "2": "openai",
-            "3": "deepseek",
-            "4": "zhipu",
-            "5": "moonshot",
-            "6": "custom"
-        }
-        provider_choice = input("\n请选择 (1-6) [1]: ").strip() or "1"
-        provider = provider_map.get(provider_choice, "siliconflow")
-        env['EMBEDDING_CLOUD_PROVIDER'] = provider
-
-        if provider == "custom":
-            env['EMBEDDING_CLOUD_URL'] = input(f"API URL [{env.get('EMBEDDING_CLOUD_URL', '')}]: ").strip() or env.get('EMBEDDING_CLOUD_URL', '')
-
+        env['EMBEDDING_CLOUD_URL'] = input(f"API URL [{env.get('EMBEDDING_CLOUD_URL', 'https://api.siliconflow.cn/v1/embeddings')}]: ").strip() or env.get('EMBEDDING_CLOUD_URL', 'https://api.siliconflow.cn/v1/embeddings')
         env['EMBEDDING_CLOUD_API_KEY'] = input(f"API Key [****]: ").strip() or env.get('EMBEDDING_CLOUD_API_KEY', '')
         env['EMBEDDING_CLOUD_MODEL'] = input(f"模型名称 [{env.get('EMBEDDING_CLOUD_MODEL', 'BAAI/bge-m3')}]: ").strip() or env.get('EMBEDDING_CLOUD_MODEL', 'BAAI/bge-m3')
         env['EMBEDDING_CLOUD_DIM'] = input(f"向量维度 [{env.get('EMBEDDING_CLOUD_DIM', '1024')}]: ").strip() or env.get('EMBEDDING_CLOUD_DIM', '1024')
@@ -234,7 +200,7 @@ def update_rerank_config(env: dict):
     """更新 Rerank 配置"""
     print("\n当前 Rerank 配置：")
     print(f"  启用: {env.get('RERANK_ENABLED', 'true')}")
-    print(f"  模式: {env.get('RERANK_MODE', 'cloud')}")
+    print(f"  模式: {env.get('RERANK_MODE', 'local')}")
 
     # 是否启用
     enabled = input(f"\n是否启用 Rerank？(y/N) [{'y' if env.get('RERANK_ENABLED', 'true') == 'true' else 'N'}]: ").strip().lower()
@@ -249,21 +215,7 @@ def update_rerank_config(env: dict):
 
         if mode_choice == "1":
             env['RERANK_MODE'] = 'cloud'
-
-            # 选择云端提供商
-            print("\n选择云端提供商：")
-            print("1. Cohere（默认）")
-            print("2. Jina")
-            print("3. 自定义")
-
-            provider_map = {"1": "cohere", "2": "jina", "3": "custom"}
-            provider_choice = input("\n请选择 (1-3) [1]: ").strip() or "1"
-            provider = provider_map.get(provider_choice, "cohere")
-            env['RERANK_CLOUD_PROVIDER'] = provider
-
-            if provider == "custom":
-                env['RERANK_CLOUD_URL'] = input(f"API URL [{env.get('RERANK_CLOUD_URL', '')}]: ").strip() or env.get('RERANK_CLOUD_URL', '')
-
+            env['RERANK_CLOUD_URL'] = input(f"API URL [{env.get('RERANK_CLOUD_URL', 'https://api.cohere.com/v1/rerank')}]: ").strip() or env.get('RERANK_CLOUD_URL', 'https://api.cohere.com/v1/rerank')
             env['RERANK_CLOUD_API_KEY'] = input(f"API Key [****]: ").strip() or env.get('RERANK_CLOUD_API_KEY', '')
             env['RERANK_CLOUD_MODEL'] = input(f"模型名称 [{env.get('RERANK_CLOUD_MODEL', 'rerank-multilingual-v3.0')}]: ").strip() or env.get('RERANK_CLOUD_MODEL', 'rerank-multilingual-v3.0')
 
@@ -488,20 +440,18 @@ def reset_config():
         # 重置为默认配置
         default_env = {
             "EMBEDDING_MODE": "cloud",
-            "EMBEDDING_CLOUD_PROVIDER": "siliconflow",
+            "EMBEDDING_CLOUD_URL": "https://api.siliconflow.cn/v1/embeddings",
             "EMBEDDING_CLOUD_API_KEY": "",
             "EMBEDDING_CLOUD_MODEL": "BAAI/bge-m3",
             "EMBEDDING_CLOUD_DIM": "1024",
-            "EMBEDDING_CLOUD_URL": "",
             "EMBEDDING_LOCAL_URL": "http://127.0.0.1:1234/v1/embeddings",
             "EMBEDDING_LOCAL_MODEL": "text-embedding-qwen3-embedding-4b",
             "EMBEDDING_LOCAL_DIM": "2560",
             "RERANK_ENABLED": "true",
-            "RERANK_MODE": "cloud",
-            "RERANK_CLOUD_PROVIDER": "cohere",
+            "RERANK_MODE": "local",
+            "RERANK_CLOUD_URL": "https://api.cohere.com/v1/rerank",
             "RERANK_CLOUD_API_KEY": "",
             "RERANK_CLOUD_MODEL": "rerank-multilingual-v3.0",
-            "RERANK_CLOUD_URL": "",
             "RERANK_LOCAL_URL": "http://127.0.0.1:5001",
             "CHROMA_SERVER_HOST": "127.0.0.1",
             "CHROMA_SERVER_PORT": "9898",
@@ -517,6 +467,9 @@ def reset_config():
             },
             "docs": {
                 "dir": "data/docs"
+            },
+            "web": {
+                "dir": "data/web"
             },
             "chroma": {
                 "dir": "data/chroma_db"

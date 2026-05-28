@@ -137,10 +137,10 @@ async def rerank_async(query: str, documents: list[str]) -> list[float]:
     mode = os.getenv("RERANK_MODE", "local").lower()
 
     if mode == "cloud":
-        # 云端模式：调用 Cohere/Jina 等云端 Rerank API
+        # 云端模式
         return await _rerank_cloud(query, documents)
     else:
-        # 本地模式：调用本地 CrossEncoder 服务
+        # 本地模式
         return await _rerank_local(query, documents)
 
 
@@ -155,13 +155,14 @@ async def _rerank_local(query: str, documents: list[str]) -> list[float]:
 
 
 async def _rerank_cloud(query: str, documents: list[str]) -> list[float]:
-    """云端 Rerank API（Cohere/Jina 等）"""
-    provider = os.getenv("RERANK_CLOUD_PROVIDER", "cohere").lower()
+    """云端 Rerank API（根据 URL 自动适配格式）"""
+    url = os.getenv("RERANK_CLOUD_URL", "https://api.cohere.com/v1/rerank").rstrip("/")
     api_key = os.getenv("RERANK_CLOUD_API_KEY", "")
     model = os.getenv("RERANK_CLOUD_MODEL", "rerank-multilingual-v3.0")
 
-    if provider == "cohere":
-        url = "https://api.cohere.com/v1/rerank"
+    # 根据 URL 判断格式
+    if "cohere.com" in url:
+        # Cohere 格式
         payload = {
             "query": query,
             "documents": documents,
@@ -176,14 +177,13 @@ async def _rerank_cloud(query: str, documents: list[str]) -> list[float]:
             r = await client.post(url, json=payload, headers=headers)
             r.raise_for_status()
             data = r.json()
-            # Cohere 返回 {"results": [{"index": 0, "relevance_score": 0.9}, ...]}
             scores = [0.0] * len(documents)
             for item in data["results"]:
                 scores[item["index"]] = item["relevance_score"]
             return scores
 
-    elif provider == "jina":
-        url = "https://api.jina.ai/v1/rerank"
+    elif "jina.ai" in url:
+        # Jina 格式
         payload = {
             "query": query,
             "documents": documents,
@@ -197,15 +197,15 @@ async def _rerank_cloud(query: str, documents: list[str]) -> list[float]:
             r = await client.post(url, json=payload, headers=headers)
             r.raise_for_status()
             data = r.json()
-            # Jina 返回 {"results": [{"index": 0, "relevance_score": 0.9}, ...]}
             scores = [0.0] * len(documents)
             for item in data["results"]:
                 scores[item["index"]] = item["relevance_score"]
             return scores
 
     else:
-        # 自定义云端 API（兼容本地格式）
-        url = os.getenv("RERANK_CLOUD_URL", "").rstrip("/") + "/rerank"
+        # 通用格式（兼容本地格式）
+        if not url.endswith("/rerank"):
+            url = url + "/rerank"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",

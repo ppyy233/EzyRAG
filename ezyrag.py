@@ -97,6 +97,44 @@ def run_module(module: str, args: list = None):
     return subprocess.run(cmd, cwd=ROOT)
 
 
+def pause():
+    """暂停等待用户输入"""
+    input("\n  按 Enter 继续...")
+
+
+def print_header(title: str):
+    """打印标题"""
+    print("\n" + "=" * 60)
+    print(f"  {title}")
+    print("=" * 60)
+
+
+def print_step(step: str, description: str):
+    """打印步骤"""
+    print(f"\n  Step {step}: {description}")
+    print("  " + "-" * 40)
+
+
+def print_ok(message: str):
+    """打印成功信息"""
+    print(f"  ✓ {message}")
+
+
+def print_error(message: str):
+    """打印错误信息"""
+    print(f"  ✗ {message}")
+
+
+def print_warn(message: str):
+    """打印警告信息"""
+    print(f"  ⚠ {message}")
+
+
+def print_info(message: str):
+    """打印信息"""
+    print(f"  {message}")
+
+
 # ============================================================
 #  环境检查
 # ============================================================
@@ -109,25 +147,25 @@ def check_environment() -> bool:
     # 检查 Python
     ok, ver = check_python()
     if ok:
-        print(f"  ✓ Python {ver}")
+        print_ok(f"Python {ver}")
     else:
-        print(f"  ✗ Python {ver}（需要 >= 3.11）")
-        print(f"    请安装 Python 3.11+：https://www.python.org/downloads/")
+        print_error(f"Python {ver}（需要 >= 3.11）")
+        print_info("请安装 Python 3.11+：https://www.python.org/downloads/")
         return False
     
     # 检查 uv
     if check_uv():
-        print(f"  ✓ uv 已安装")
+        print_ok("uv 已安装")
     else:
-        print(f"  ✗ uv 未安装")
-        print(f"    安装命令：powershell -c \"irm https://astral.sh/uv/install.ps1 | iex\"")
+        print_error("uv 未安装")
+        print_info("安装命令：powershell -c \"irm https://astral.sh/uv/install.ps1 | iex\"")
         return False
     
     # 检查 .env
     if check_env():
-        print(f"  ✓ config/.env 已存在")
+        print_ok("config/.env 已存在")
     else:
-        print(f"  ⚠ config/.env 不存在（将从模板创建）")
+        print_warn("config/.env 不存在（将从模板创建）")
     
     print("  " + "-" * 40)
     return True
@@ -139,80 +177,76 @@ def check_environment() -> bool:
 
 def cmd_quickstart():
     """快速开始向导"""
-    print("\n" + "=" * 60)
-    print("  Ezy-RAG Quick Start 向导")
-    print("=" * 60)
+    print_header("Ezy-RAG Quick Start 向导")
     
     # Step 1: 环境检查
-    print("\n  Step 1: 环境检查")
+    print_step("1", "环境检查")
     ok = check_environment()
     if not ok:
         print("\n  环境检查未通过，请先解决上述问题。")
         return
     
     # Step 2: 安装依赖
-    print("\n  Step 2: 安装依赖")
-    print("  " + "-" * 40)
+    print_step("2", "安装依赖")
     
     # 检查 .venv 是否存在
     if not (ROOT / ".venv").exists():
-        print("  正在创建虚拟环境...")
+        print_info("正在创建虚拟环境...")
         result = subprocess.run(["uv", "venv"], cwd=ROOT, capture_output=True, text=True)
         if result.returncode != 0:
-            print(f"  ✗ 创建虚拟环境失败：{result.stderr}")
+            print_error(f"创建虚拟环境失败：{result.stderr}")
             return
-        print("  ✓ 虚拟环境已创建")
+        print_ok("虚拟环境已创建")
     
-    print("  正在安装依赖...")
+    print_info("正在安装依赖...")
     result = subprocess.run(["uv", "sync"], cwd=ROOT, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"  ✗ 安装依赖失败：{result.stderr}")
+        print_error(f"安装依赖失败：{result.stderr}")
         return
-    print("  ✓ 依赖已安装")
+    print_ok("依赖已安装")
     
     # Step 3: 配置
-    print("\n  Step 3: 配置")
-    print("  " + "-" * 40)
-    print("  即将启动配置向导...")
-    input("  按 Enter 继续...")
+    print_step("3", "配置")
+    print_info("即将启动配置向导...")
+    pause()
     run_script("init.py")
     
     # Step 4: 添加本地文档（可选）
-    print("\n  Step 4: 添加本地文档")
-    print("  " + "-" * 40)
+    print_step("4", "添加本地文档")
     
     docs_dir = ROOT / "data" / "docs"
     if docs_dir.exists():
-        doc_count = len(list(docs_dir.glob("**/*")))
+        # 统计文档数量
+        doc_count = 0
+        for ext in [".txt", ".md", ".pdf", ".docx", ".py", ".js", ".ts", ".java", ".c", ".cpp", ".go", ".rs"]:
+            doc_count += len(list(docs_dir.glob(f"**/*{ext}")))
+        
         if doc_count > 0:
-            print(f"  发现 {doc_count} 个本地文档")
+            print_info(f"发现 {doc_count} 个本地文档")
             choice = input("  是否添加到向量库？(Y/n): ").strip().lower()
             if choice != 'n':
-                print("  正在添加文档...")
+                print_info("正在添加文档...")
                 run_script("db_manage.py", ["add", "--all"])
             else:
-                print("  跳过添加文档")
+                print_info("跳过添加文档")
         else:
-            print("  data/docs/ 目录为空，跳过添加文档")
+            print_info("data/docs/ 目录为空，跳过添加文档")
     else:
-        print("  data/docs/ 目录不存在，跳过添加文档")
+        print_info("data/docs/ 目录不存在，跳过添加文档")
     
     # Step 5: 启动服务
-    print("\n  Step 5: 启动服务")
-    print("  " + "-" * 40)
-    print("  即将启动服务管理...")
-    input("  按 Enter 继续...")
+    print_step("5", "启动服务")
+    print_info("即将启动服务管理...")
+    pause()
     run_script("start_all.py")
     
     # 完成
-    print("\n" + "=" * 60)
-    print("  Quick Start 完成！")
-    print("=" * 60)
+    print_header("Quick Start 完成！")
     print("\n  下一步操作：")
-    print("    python ezyrag.py db list          # 查看文档映射")
-    print("    python ezyrag.py health           # 检查服务状态")
-    print("    python ezyrag.py service          # 管理服务")
-    print("    python ezyrag.py db add --all     # 添加更多文档")
+    print_info("python ezyrag.py db list          # 查看文档映射")
+    print_info("python ezyrag.py health           # 检查服务状态")
+    print_info("python ezyrag.py service          # 管理服务")
+    print_info("python ezyrag.py db add --all     # 添加更多文档")
     print("")
 
 
@@ -222,6 +256,9 @@ def cmd_quickstart():
 
 def cmd_init():
     """配置管理"""
+    print_header("配置管理")
+    print_info("即将启动配置管理脚本...")
+    pause()
     run_script("init.py")
 
 
@@ -231,6 +268,9 @@ def cmd_init():
 
 def cmd_service():
     """服务管理"""
+    print_header("服务管理")
+    print_info("即将启动服务管理脚本...")
+    pause()
     run_script("start_all.py")
 
 
@@ -242,9 +282,14 @@ def cmd_db(args):
     """数据库管理"""
     if not args:
         # 无参数，进入交互式菜单
+        print_header("数据库管理")
+        print_info("即将启动数据库管理脚本...")
+        pause()
         run_script("db_manage.py")
     else:
         # 有参数，转发命令
+        print(f"\n  执行: python db_manage.py {' '.join(args)}")
+        print("  " + "-" * 40)
         run_script("db_manage.py", args)
 
 
@@ -254,6 +299,17 @@ def cmd_db(args):
 
 def cmd_build(args):
     """知识库构建"""
+    if not args:
+        # 无参数，显示提示
+        print_header("知识库构建")
+        print("\n  用法：")
+        print_info("python ezyrag.py build              # 增量构建")
+        print_info("python ezyrag.py build --full       # 全量重建")
+        print_info("python ezyrag.py build -t chinese   # 指定切块模板")
+        return
+    
+    print(f"\n  执行: python -m core.builder {' '.join(args)}")
+    print("  " + "-" * 40)
     run_module("core.builder", args)
 
 
@@ -263,9 +319,7 @@ def cmd_build(args):
 
 def cmd_health():
     """健康检查"""
-    print("\n" + "=" * 60)
-    print("  Ezy-RAG 健康检查")
-    print("=" * 60)
+    print_header("Ezy-RAG 健康检查")
     
     # 从 .env 读取配置
     env_path = ROOT / "config" / ".env"
@@ -306,17 +360,21 @@ def cmd_health():
         embedding_ok = check_port("127.0.0.1", embedding_port)
         print(f"  {'✓' if embedding_ok else '✗'} Embedding   : {'运行中' if embedding_ok else '未运行'} (本地模式, 端口 {embedding_port})")
     else:
-        provider = env_config.get("EMBEDDING_CLOUD_PROVIDER", "siliconflow")
+        embedding_url = env_config.get("EMBEDDING_CLOUD_URL", "https://api.siliconflow.cn/v1/embeddings")
         api_key = env_config.get("EMBEDDING_CLOUD_API_KEY", "")
+        try:
+            domain = embedding_url.split("//")[1].split("/")[0]
+        except:
+            domain = "unknown"
         if api_key:
-            print(f"  ✓ Embedding   : 已配置 (云端模式, {provider})")
+            print(f"  ✓ Embedding   : 已配置 (云端模式, {domain})")
         else:
-            print(f"  ✗ Embedding   : 未配置 (云端模式, {provider})")
+            print(f"  ✗ Embedding   : 未配置 (云端模式, {domain})")
     
     # Rerank
     rerank_enabled = env_config.get("RERANK_ENABLED", "true").lower() == "true"
     if rerank_enabled:
-        rerank_mode = env_config.get("RERANK_MODE", "cloud")
+        rerank_mode = env_config.get("RERANK_MODE", "local")
         if rerank_mode == "local":
             rerank_url = env_config.get("RERANK_LOCAL_URL", "http://127.0.0.1:5001")
             try:
@@ -326,12 +384,16 @@ def cmd_health():
             rerank_ok = check_port("127.0.0.1", rerank_port)
             print(f"  {'✓' if rerank_ok else '✗'} Rerank      : {'运行中' if rerank_ok else '未运行'} (本地模式, 端口 {rerank_port})")
         else:
-            provider = env_config.get("RERANK_CLOUD_PROVIDER", "cohere")
+            rerank_url = env_config.get("RERANK_CLOUD_URL", "https://api.cohere.com/v1/rerank")
             api_key = env_config.get("RERANK_CLOUD_API_KEY", "")
+            try:
+                domain = rerank_url.split("//")[1].split("/")[0]
+            except:
+                domain = "unknown"
             if api_key:
-                print(f"  ✓ Rerank      : 已配置 (云端模式, {provider})")
+                print(f"  ✓ Rerank      : 已配置 (云端模式, {domain})")
             else:
-                print(f"  ✗ Rerank      : 未配置 (云端模式, {provider})")
+                print(f"  ✗ Rerank      : 未配置 (云端模式, {domain})")
     else:
         print(f"  - Rerank      : 未启用")
     
@@ -357,8 +419,8 @@ def cmd_health():
             try:
                 collection = client.get_collection(name=collection_name)
                 count = collection.count()
-                print(f"  集合名      : {collection_name}")
-                print(f"  向量数量    : {count}")
+                print_info(f"集合名      : {collection_name}")
+                print_info(f"向量数量    : {count}")
                 
                 # 检查孤立记录
                 result = collection.get(include=["metadatas"])
@@ -371,22 +433,24 @@ def cmd_health():
                     
                     orphan_count = 0
                     for src in sources:
-                        meta = result["metadatas"][0]
-                        source_type = meta.get("source_type", "local_file")
-                        if source_type == "local_file" and not Path(src).exists():
-                            orphan_count += 1
+                        for meta in result["metadatas"]:
+                            if meta.get("source") == src:
+                                source_type = meta.get("source_type", "local_file")
+                                if source_type == "local_file" and not Path(src).exists():
+                                    orphan_count += 1
+                                break
                     
                     if orphan_count > 0:
-                        print(f"  ⚠ 孤立记录  : {orphan_count} 个（本地文件已删除）")
-                        print(f"    清理命令  : python ezyrag.py db clean")
+                        print_warn(f"孤立记录  : {orphan_count} 个（本地文件已删除）")
+                        print_info(f"清理命令  : python ezyrag.py db clean")
                     else:
-                        print(f"  孤立记录    : 0 个")
+                        print_info(f"孤立记录    : 0 个")
             except Exception as e:
-                print(f"  集合不存在  : {e}")
+                print_info(f"集合不存在  : {e}")
         except Exception as e:
-            print(f"  连接失败    : {e}")
+            print_info(f"连接失败    : {e}")
     else:
-        print(f"  ChromaDB 未运行，无法获取数据库状态")
+        print_info("ChromaDB 未运行，无法获取数据库状态")
     
     print("\n" + "=" * 60)
 
