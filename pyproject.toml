@@ -1,6 +1,6 @@
 [project]
 name = "ezy-rag"
-version = "0.0.14"
+version = "0.0.17"
 description = "Ezy-RAG 知识库系统"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -14,7 +14,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.63b1",
     "pypdf>=6.11.0",
     "python-docx>=1.2.0",
-    "requests>=2.31.0",
+    "requests>=2.28.0",
     "sentence-transformers>=5.5.0",
     "tokenizers==0.22.1",
     "torch>=2.5.0,<2.7.0",
