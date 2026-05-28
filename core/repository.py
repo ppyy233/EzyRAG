@@ -141,6 +141,26 @@ class DocumentRepository:
         except Exception:
             return []
 
+    def get_document_info(self, source: str) -> Optional[dict]:
+        """获取单个文档的详细信息"""
+        try:
+            result = self.collection.get(
+                where={"source": source},
+                include=["metadatas"]
+            )
+            if not result or not result["metadatas"]:
+                return None
+            
+            doc_info = {
+                "source": source,
+                "chunks": len(result["metadatas"]),
+                "content_hash": result["metadatas"][0].get("content_hash", ""),
+                "chunk_ids": result["ids"],
+            }
+            return doc_info
+        except Exception:
+            return None
+
     # ====== Update ======
 
     def update(self, doc: dict, chunk_cfg: dict) -> int:
