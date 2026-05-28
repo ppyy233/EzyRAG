@@ -100,12 +100,24 @@ async def get_collection_async():
 
 
 async def check_lm_studio_health() -> tuple[bool, str]:
-    base_url = os.getenv("EMBEDDING_API_URL", "http://127.0.0.1:5000/v1/embeddings").rsplit("/v1/", 1)[0]
+    # 根据模式读取对应的 URL
+    mode = os.getenv("EMBEDDING_MODE", "cloud").lower()
+    if mode == "local":
+        url = os.getenv("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings")
+        api_key = ""
+    else:
+        url = os.getenv("EMBEDDING_CLOUD_URL", "https://api.siliconflow.cn/v1/embeddings")
+        api_key = os.getenv("EMBEDDING_CLOUD_API_KEY", "")
+    
+    base_url = url.rsplit("/v1/", 1)[0]
+    
     try:
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        
         async with httpx.AsyncClient(timeout=3) as c:
-            r = await c.get(f"{base_url}/v1/models", headers={
-                "Authorization": f"Bearer {os.getenv('EMBEDDING_API_KEY', '')}"
-            })
+            r = await c.get(f"{base_url}/v1/models", headers=headers)
             if r.status_code == 200:
                 return True, ""
             return False, f"Embedding 服务返回状态码 {r.status_code}"
