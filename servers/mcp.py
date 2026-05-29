@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — MCP 服务器 (Client-Server 模式)
+Ezy-RAG V1.0.0 — MCP 服务器 (Client-Server 模式)
 通过 HTTP 暴露 search_knowledge_base 工具，供 opencode 等 MCP 客户端调用
 使用 AsyncHttpClient 连接 ChromaDB Server 实现异步查询
 
@@ -26,6 +26,7 @@ import httpx
 
 import time as _time
 from core.embedder import get_lm_proxy
+from core.reranker import rerank_async
 
 # 从配置文件读取
 COLLECTION_NAME = get_collection_name()
@@ -47,7 +48,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Ezy-RAG-MCP")
 
-app = FastAPI(title="Ezy-RAG MCP Server", version="0.0.14")
+app = FastAPI(title="Ezy-RAG MCP Server", version="1.0.0")
 
 _oai_client = None
 _chroma_client = None
@@ -132,19 +133,6 @@ async def embed_query_async(query: str) -> list[float]:
     return vectors[0]
 
 
-async def rerank_async(query: str, documents: list[str]) -> list[float]:
-    """调用重排 API，返回分数列表"""
-    url = os.getenv("RERANK_API_URL", "http://127.0.0.1:5001").rstrip("/") + "/rerank"
-    headers = {"Content-Type": "application/json"}
-    rerank_key = os.getenv("RERANK_API_KEY", "")
-    if rerank_key:
-        headers["Authorization"] = f"Bearer {rerank_key}"
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(url, json={"query": query, "documents": documents}, headers=headers)
-        r.raise_for_status()
-        return r.json()["scores"]
-
-
 async def search_async(query: str) -> str:
     ok, err = await check_lm_studio_cached()
     if not ok:
@@ -158,7 +146,7 @@ async def search_async(query: str) -> str:
         fetch_k = RETRIEVAL_FETCH_K if do_rerank else RETRIEVAL_K
 
         results = await collection.query(
-            query_embeddings=[query_vec],
+            query_embeddings=query_vec,
             n_results=fetch_k,
             include=["documents", "metadatas", "distances"],
         )
@@ -295,7 +283,7 @@ async def mcp_endpoint(request: Request):
             "id": req_id,
             "result": {
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "Ezy-RAG", "version": "0.0.14"},
+                "serverInfo": {"name": "Ezy-RAG", "version": "1.0.0"},
                 "capabilities": {"tools": {}}
             }
         })
@@ -312,7 +300,7 @@ async def mcp_endpoint(request: Request):
 
 
 def main():
-    logger.info("Ezy-RAG MCP Server V0.0.14 启动中...")
+    logger.info("Ezy-RAG MCP Server V1.0.0 启动中...")
     logger.info(f"Embedding 服务: {os.getenv('EMBEDDING_API_URL', 'http://127.0.0.1:5000/v1/embeddings')}")
     logger.info(f"ChromaDB Server: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
     logger.info(f"监听: http://{os.getenv('MCP_SERVER_HOST', '127.0.0.1')}:{os.getenv('MCP_SERVER_PORT', '9766')}")

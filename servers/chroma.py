@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — ChromaDB Server 启动脚本
+Ezy-RAG V1.0.0 — ChromaDB Server 启动脚本
 用法: python -m servers.chroma
 """
 import os

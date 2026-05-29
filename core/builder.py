@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — 知识库构建脚本 (Client-Server 模式)
+Ezy-RAG V1.0.0 — 知识库构建脚本 (Client-Server 模式)
 读取 data/docs/ 中的文档 → 中文友好切片 → 调用 Embedding 服务向量化 → 存入 ChromaDB Server
 
 支持：PDF / Word / TXT / 代码文件等 30+ 格式
@@ -363,6 +363,23 @@ def build_incremental(collection_key: str, chroma_client, documents, emb_proxy, 
     return repo.count()
 
 
+def build_full(collection_key: str, chroma_client, documents, emb_proxy, chunk_cfg: dict):
+    """
+    全量重建 — 删除旧集合后重新添加所有文档
+    调用方应先删除集合，再调用此函数
+    """
+    collection = chroma_client.get_or_create_collection(
+        name=collection_key,
+        metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100},
+    )
+    from core.repository import DocumentRepository
+    repo = DocumentRepository(collection, emb_proxy)
+
+    count = repo.add_many(documents, chunk_cfg)
+    print(f"  全量重建完成! 集合 {collection_key}: {count} 个 chunks")
+    return count
+
+
 def get_or_create_collection(chroma_client, collection_key: str):
     """获取或创建集合"""
     collection_name = get_active_collection(collection_key)
@@ -387,7 +404,7 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
 
     mode = "全量重建" if full_rebuild else "增量更新"
     print("=" * 60)
-    print(f"  Ezy-RAG V0.0.14 — 知识库构建 ({mode})")
+    print(f"  Ezy-RAG V1.0.0 — 知识库构建 ({mode})")
     print(f"  切块模板: {chunk_cfg['name']} ({chunk_cfg['strategy']}, {chunk_cfg['chunk_size']}字)")
     print("=" * 60)
 

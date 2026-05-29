@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — 配置管理脚本
+Ezy-RAG V1.0.0 — 配置管理脚本
 用法: python init.py
 """
 import os
@@ -8,7 +8,7 @@ import json
 import shutil
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).parent.parent
 CONFIG_DIR = ROOT / "config"
 ENV_FILE = CONFIG_DIR / ".env"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -32,7 +32,7 @@ def save_env(env: dict):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(ENV_FILE, 'w', encoding='utf-8') as f:
         f.write("# ============================================================\n")
-        f.write("# Ezy-RAG V0.0.14 — 环境配置\n")
+        f.write("# Ezy-RAG V1.0.0 — 环境配置\n")
         f.write("# 由 init.py 生成\n")
         f.write("# ============================================================\n\n")
 
@@ -463,14 +463,87 @@ def delete_config():
         print("\n已取消删除")
 
 
+def create_default_env():
+    """创建默认 .env 配置"""
+    default_env = {
+        "EMBEDDING_API_URL": "http://127.0.0.1:5000/v1/embeddings",
+        "EMBEDDING_API_KEY": "",
+        "EMBEDDING_MODEL": "text-embedding-qwen3-embedding-4b",
+        "EMBEDDING_DIM": "2560",
+        "RERANK_ENABLED": "true",
+        "RERANK_API_URL": "http://127.0.0.1:5001",
+        "RERANK_API_KEY": "",
+        "RERANK_MODEL": "",
+        "CHROMA_SERVER_HOST": "127.0.0.1",
+        "CHROMA_SERVER_PORT": "9898",
+        "MCP_SERVER_HOST": "127.0.0.1",
+        "MCP_SERVER_PORT": "9766",
+        "CHUNK_TEMPLATE": "academic"
+    }
+    save_env(default_env)
+    print("已创建默认 .env 配置")
+
+
+def create_default_config():
+    """创建默认 config.json 配置"""
+    default_config = {
+        "collection": {"name": "default_collection"},
+        "docs": {"dir": "data/docs"},
+        "chroma": {"dir": "data/chroma_db"},
+        "chunk": {
+            "templates": {
+                "academic": {
+                    "name": "英文文献专用",
+                    "chunk_size": 2000,
+                    "overlap": 200,
+                    "strategy": "recursive",
+                    "separators": ["\n\n", "\n", "\r\n", "。", ". ", "！", "?", "？", "!", "；", ";", "，", ",", "、", " ", ""]
+                },
+                "chinese": {
+                    "name": "中文专用",
+                    "chunk_size": 1500,
+                    "overlap": 150,
+                    "strategy": "recursive",
+                    "separators": ["\n\n", "\n", "。", "！", "？", "；", "，", "、", " ", ""]
+                },
+                "code": {
+                    "name": "数据分析/代码专用",
+                    "chunk_size": 3000,
+                    "overlap": 300,
+                    "strategy": "flat",
+                    "separators": ["\n\n\n", "\n\n", "\n", ". ", " ", ""]
+                },
+                "custom": {
+                    "name": "自定义模板",
+                    "chunk_size": 1000,
+                    "overlap": 100,
+                    "strategy": "recursive",
+                    "separators": ["\n\n", "\n", " ", ""]
+                }
+            },
+            "default_template": "academic"
+        },
+        "retrieval": {"k": 5, "fetch_k": 15, "lambda": 0.7, "threshold": 0.3}
+    }
+    save_config(default_config)
+    print("已创建默认 config.json 配置")
+
+
 def main():
     """主函数"""
     # 确保配置目录存在
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
+    # 首次运行自动创建默认配置
+    if not ENV_FILE.exists():
+        print("\n检测到首次运行，正在创建默认配置...")
+        create_default_env()
+        create_default_config()
+        print("配置创建完成！请根据需要修改 config/.env\n")
+
     while True:
         print("\n" + "=" * 60)
-        print("  Ezy-RAG V0.0.14 — 配置管理")
+        print("  Ezy-RAG V1.0.0 — 配置管理")
         print("=" * 60)
         print("1. 查看配置")
         print("2. 更新配置")

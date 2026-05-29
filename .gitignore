@@ -28,13 +28,10 @@ data/models/*
 config/.env
 
 # Runtime generated files
-runtime/logs/
-runtime/state/
+runtime/logs/*
 !runtime/logs/.gitkeep
+runtime/state/*
 !runtime/state/.gitkeep
-
-# Downloaded model files
-models/
 
 # Backup files
 *.backup

@@ -12,7 +12,7 @@
             </div>
           </template>
           <div class="card-content">
-            <div class="stat-number">{{ status.local_documents || 0 }}</div>
+            <div class="stat-number">{{ status.total_documents || 0 }}</div>
             <div class="stat-label">个文档</div>
           </div>
         </el-card>
@@ -23,12 +23,12 @@
           <template #header>
             <div class="card-header">
               <el-icon><DataBoard /></el-icon>
-              <span>向量库文档</span>
+              <span>向量库记录</span>
             </div>
           </template>
           <div class="card-content">
-            <div class="stat-number">{{ status.vector_documents || 0 }}</div>
-            <div class="stat-label">个文档</div>
+            <div class="stat-number">{{ status.total_records || 0 }}</div>
+            <div class="stat-label">条记录</div>
           </div>
         </el-card>
       </el-col>
@@ -37,13 +37,12 @@
         <el-card class="status-card">
           <template #header>
             <div class="card-header">
-              <el-icon><List /></el-icon>
-              <span>Chunks</span>
+              <el-icon><FolderOpened /></el-icon>
+              <span>集合名称</span>
             </div>
           </template>
           <div class="card-content">
-            <div class="stat-number">{{ status.total_chunks || 0 }}</div>
-            <div class="stat-label">个向量</div>
+            <div class="stat-text">{{ status.collection || 'N/A' }}</div>
           </div>
         </el-card>
       </el-col>
@@ -57,12 +56,11 @@
             </div>
           </template>
           <div class="card-content">
-            <el-tag :type="status.chromadb?.status === 'online' ? 'success' : 'danger'" size="large">
-              ChromaDB: {{ status.chromadb?.status || 'unknown' }}
-            </el-tag>
-            <el-tag :type="status.embedding?.status === 'online' ? 'success' : 'danger'" size="large" style="margin-top: 10px;">
-              Embedding: {{ status.embedding?.status || 'unknown' }}
-            </el-tag>
+            <div v-for="svc in serviceList" :key="svc.name" class="service-row">
+              <el-tag :type="svc.online ? 'success' : 'danger'" size="small">
+                {{ svc.name }}: {{ svc.online ? '在线' : '离线' }}
+              </el-tag>
+            </div>
           </div>
         </el-card>
       </el-col>
@@ -86,11 +84,11 @@
               <el-icon><Search /></el-icon>
               搜索知识库
             </el-button>
-            <el-button type="warning" @click="syncDocuments">
+            <el-button type="warning" @click="syncDocuments" :loading="syncing">
               <el-icon><Refresh /></el-icon>
               同步文档
             </el-button>
-            <el-button type="danger" @click="rebuildDatabase">
+            <el-button type="danger" @click="rebuildDatabase" :loading="rebuilding">
               <el-icon><RefreshRight /></el-icon>
               全量重建
             </el-button>
@@ -107,10 +105,8 @@
             </div>
           </template>
           <div class="system-info">
-            <p><strong>集合名称：</strong>{{ status.collection || 'N/A' }}</p>
-            <p><strong>总记录数：</strong>{{ status.total_records || 0 }}</p>
-            <p><strong>ChromaDB：</strong>{{ status.chromadb?.url || 'N/A' }}</p>
-            <p><strong>Embedding：</strong>{{ status.embedding?.url || 'N/A' }}</p>
+            <p><strong>Embedding 服务：</strong>{{ status.embedding?.url || 'N/A' }}</p>
+            <p><strong>ChromaDB 服务：</strong>{{ status.chromadb?.url || 'N/A' }}</p>
           </div>
         </el-card>
       </el-col>
@@ -119,17 +115,30 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { getStatus, syncDocuments as syncApi, rebuildDatabase as rebuildApi } from '../api'
+import { ref, computed, onMounted } from 'vue'
+import { getStatus, getServices, syncDocuments as syncApi, rebuildDatabase as rebuildApi } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const status = ref({})
+const services = ref([])
+const syncing = ref(false)
+const rebuilding = ref(false)
+
+const serviceList = computed(() => {
+  return services.value.map(s => ({
+    name: s.name,
+    online: s.status === 'online'
+  }))
+})
 
 const loadStatus = async () => {
   try {
-    const response = await getStatus()
-    if (response.status === 'success') {
-      status.value = response.data
+    const [statusRes, servicesRes] = await Promise.all([getStatus(), getServices()])
+    if (statusRes.status === 'success') {
+      status.value = statusRes.data
+    }
+    if (servicesRes.status === 'success') {
+      services.value = servicesRes.data || []
     }
   } catch (error) {
     console.error('获取状态失败:', error)
@@ -138,10 +147,8 @@ const loadStatus = async () => {
 
 const syncDocuments = async () => {
   try {
-    await ElMessageBox.confirm('确定要同步本地文件和向量库吗？', '确认', {
-      type: 'info'
-    })
-    
+    await ElMessageBox.confirm('确定要同步本地文件和向量库吗？', '确认', { type: 'info' })
+    syncing.value = true
     const response = await syncApi()
     if (response.status === 'success') {
       ElMessage.success(response.message)
@@ -150,18 +157,16 @@ const syncDocuments = async () => {
       ElMessage.error(response.message)
     }
   } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error('同步失败')
-    }
+    if (error !== 'cancel') ElMessage.error('同步失败')
+  } finally {
+    syncing.value = false
   }
 }
 
 const rebuildDatabase = async () => {
   try {
-    await ElMessageBox.confirm('确定要全量重建向量库吗？这将清空现有数据！', '警告', {
-      type: 'warning'
-    })
-    
+    await ElMessageBox.confirm('确定要全量重建向量库吗？这将清空现有数据！', '警告', { type: 'warning' })
+    rebuilding.value = true
     const response = await rebuildApi()
     if (response.status === 'success') {
       ElMessage.success(response.message)
@@ -170,9 +175,9 @@ const rebuildDatabase = async () => {
       ElMessage.error(response.message)
     }
   } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error('重建失败')
-    }
+    if (error !== 'cancel') ElMessage.error('重建失败')
+  } finally {
+    rebuilding.value = false
   }
 }
 
@@ -217,10 +222,21 @@ h1 {
   color: #409eff;
 }
 
+.stat-text {
+  font-size: 14px;
+  font-weight: bold;
+  color: #409eff;
+  word-break: break-all;
+}
+
 .stat-label {
   font-size: 14px;
   color: #909399;
   margin-top: 10px;
+}
+
+.service-row {
+  margin: 5px 0;
 }
 
 .action-cards {

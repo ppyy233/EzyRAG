@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — REST API + WebSocket 服务器
+Ezy-RAG V1.0.0 — REST API + WebSocket 服务器
 提供文档管理、搜索、状态查询等 API
 
 用法: python -m servers.api
@@ -10,6 +10,8 @@ import sys
 import json
 import asyncio
 import logging
+import subprocess
+import time
 from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime
@@ -25,18 +27,32 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-import settings
-from config.settings import get_chunk_config, get_collection_name
+from config.settings import get_chunk_config, get_collection_name, get_retrieval_config, load_config, save_config, load_env, save_env
 from core.embedder import get_lm_proxy
+from core.reranker import rerank_async
 from core.repository import DocumentRepository
-from core.builder import build_incremental, build_full, load_all_documents
+from core.builder import build_incremental, build_full, load_all_documents, read_txt, read_pdf, read_docx
+
+RETRIEVAL_CONFIG = get_retrieval_config()
+
+# 文件读取器映射
+READERS = {
+    ".pdf": read_pdf,
+    ".docx": read_docx,
+}
+
+def smart_read_file(filepath: str) -> str:
+    """根据文件扩展名选择正确的读取器"""
+    ext = Path(filepath).suffix.lower()
+    reader = READERS.get(ext, read_txt)
+    return reader(filepath)
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("Ezy-RAG-API")
 
 # 创建 FastAPI 应用
-app = FastAPI(title="Ezy-RAG API", version="0.0.14")
+app = FastAPI(title="Ezy-RAG API", version="1.0.0")
 
 # CORS 中间件
 app.add_middleware(
@@ -69,6 +85,10 @@ class ConnectionManager:
                 pass
 
 manager = ConnectionManager()
+
+# 向量化取消标志
+import threading
+_vectorization_cancel = threading.Event()
 
 # 请求模型
 class AddDocumentRequest(BaseModel):
@@ -240,14 +260,23 @@ async def list_documents():
 async def add_document(request: AddDocumentRequest):
     """添加文档到向量库"""
     try:
+        _vectorization_cancel.clear()
+        # 重置 embedding 代理的取消标志
+        try:
+            emb_proxy = get_lm_proxy()
+            emb_proxy._cancelled.clear()
+        except Exception:
+            pass
         file_path = request.file_path
         full_path = ROOT / file_path
         
         if not full_path.exists():
             raise HTTPException(status_code=404, detail=f"文件不存在: {file_path}")
         
-        # 读取文件内容
-        text = full_path.read_text(encoding="utf-8")
+        # 读取文件内容（自动选择正确的解析器）
+        text = smart_read_file(str(full_path))
+        if not text or not text.strip():
+            raise HTTPException(status_code=400, detail=f"文件无法解析或内容为空: {file_path}")
         doc_name = full_path.stem
         text = f"[文件名: {doc_name}]\n{text}"
         
@@ -255,22 +284,32 @@ async def add_document(request: AddDocumentRequest):
         repo = await get_repository()
         chunk_cfg = get_chunk_config()
         doc = {"path": file_path, "text": text}
-        count = repo.add(doc, chunk_cfg)
+        
+        def on_progress(done, total, pct, msg):
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(manager.broadcast({
+                        "type": "vectorize",
+                        "data": {"file": doc_name, "done": done, "total": total, "percent": pct, "message": msg},
+                        "timestamp": datetime.now().isoformat()
+                    }))
+            except Exception:
+                pass
+        
+        count = repo.add(doc, chunk_cfg, on_progress=on_progress, cancel_check=_vectorization_cancel.is_set)
         
         # 广播文档更新
         await manager.broadcast({
             "type": "document",
-            "data": {
-                "action": "add",
-                "file_path": file_path,
-                "chunks": count
-            },
+            "data": {"action": "add", "file_path": file_path, "chunks": count},
             "timestamp": datetime.now().isoformat()
         })
         
         return ApiResponse(
             status="success",
-            message=f"添加成功: {file_path} ({count} chunks)"
+            message=f"添加成功: {os.path.basename(file_path)} ({count} chunks)"
         )
     except Exception as e:
         return ApiResponse(status="error", message=str(e))
@@ -341,7 +380,7 @@ async def update_document(request: UpdateDocumentRequest):
             raise HTTPException(status_code=404, detail=f"文件不存在: {file_path}")
         
         # 读取文件内容
-        text = full_path.read_text(encoding="utf-8")
+        text = smart_read_file(str(full_path))
         doc_name = full_path.stem
         text = f"[文件名: {doc_name}]\n{text}"
         
@@ -393,7 +432,7 @@ async def sync_documents():
         for doc_path in new_docs:
             try:
                 full_path = ROOT / doc_path
-                text = full_path.read_text(encoding="utf-8")
+                text = smart_read_file(str(full_path))
                 doc_name = full_path.stem
                 text = f"[文件名: {doc_name}]\n{text}"
                 
@@ -430,6 +469,49 @@ async def sync_documents():
         )
     except Exception as e:
         return ApiResponse(status="error", message=str(e))
+
+
+# ====== 向量库文档管理 ======
+
+class VectorDocDeleteRequest(BaseModel):
+    source: str
+
+@app.get("/api/vector-docs")
+async def list_vector_documents():
+    """获取向量库中的文档列表"""
+    try:
+        repo = await get_repository()
+        docs = repo.list_documents()
+        total_chunks = sum(d["chunks"] for d in docs)
+        return ApiResponse(
+            status="success",
+            data={"documents": docs, "total": len(docs), "total_chunks": total_chunks}
+        )
+    except Exception as e:
+        return ApiResponse(status="error", message=str(e))
+
+@app.delete("/api/vector-docs")
+async def delete_vector_document(request: VectorDocDeleteRequest):
+    """从向量库删除文档"""
+    try:
+        repo = await get_repository()
+        repo.delete(request.source)
+        return ApiResponse(status="success", message=f"已从向量库删除: {os.path.basename(request.source)}")
+    except Exception as e:
+        return ApiResponse(status="error", message=str(e))
+
+
+@app.post("/api/documents/cancel")
+async def cancel_vectorization():
+    """取消正在进行的向量化任务"""
+    _vectorization_cancel.set()
+    try:
+        emb_proxy = get_lm_proxy()
+        emb_proxy.cancel_all()
+    except Exception:
+        pass
+    return ApiResponse(status="success", message="已发送取消请求，等待当前批次完成...")
+
 
 @app.post("/api/rebuild")
 async def rebuild_database():
@@ -491,16 +573,71 @@ async def rebuild_database():
 async def search_knowledge_base(request: SearchRequest):
     """搜索知识库"""
     try:
-        # 这里需要调用 MCP 的搜索逻辑
-        # 暂时返回模拟结果
+        query = request.query
+        if not query.strip():
+            return ApiResponse(status="error", message="搜索关键词不能为空")
+
+        # 1. 向量化查询
+        emb_proxy = get_lm_proxy()
+        query_vec = await emb_proxy.embed_async([query], priority=0)
+
+        # 2. 查询 ChromaDB
+        repo = await get_repository()
+        do_rerank = os.getenv("RERANK_ENABLED", "false").lower() == "true"
+        fetch_k = RETRIEVAL_CONFIG["fetch_k"] if do_rerank else RETRIEVAL_CONFIG["k"]
+
+        results = repo.collection.query(
+            query_embeddings=query_vec,
+            n_results=fetch_k,
+            include=["documents", "metadatas", "distances"],
+        )
+
+        if not results or not results["ids"] or not results["ids"][0]:
+            return ApiResponse(status="success", data={"query": query, "results": []})
+
+        ids = results["ids"][0]
+        docs = results["documents"][0]
+        metas = results["metadatas"][0]
+        dists = results["distances"][0]
+
+        # 3. 可选重排
+        if do_rerank and len(docs) > RETRIEVAL_CONFIG["k"]:
+            try:
+                scores = await rerank_async(query, docs)
+                ranked = sorted(zip(range(len(docs)), scores), key=lambda x: x[1], reverse=True)
+                top_indices = [i for i, _ in ranked[:RETRIEVAL_CONFIG["k"]]]
+                ids = [ids[i] for i in top_indices]
+                docs = [docs[i] for i in top_indices]
+                metas = [metas[i] for i in top_indices]
+                dists = [dists[i] for i in top_indices]
+            except Exception as e:
+                logger.warning(f"重排失败，使用原始结果: {e}")
+                k = RETRIEVAL_CONFIG["k"]
+                ids, docs, metas, dists = ids[:k], docs[:k], metas[:k], dists[:k]
+        else:
+            k = RETRIEVAL_CONFIG["k"]
+            ids, docs, metas, dists = ids[:k], docs[:k], metas[:k], dists[:k]
+
+        # 4. 组装结果
+        search_results = []
+        for i, (doc_id, doc_text, meta, dist) in enumerate(zip(ids, docs, metas, dists)):
+            source = meta.get("source", "未知来源")
+            similarity = max(0, 1 - dist)
+            search_results.append({
+                "index": i + 1,
+                "source": source,
+                "filename": os.path.basename(source),
+                "content": doc_text.strip(),
+                "similarity": round(similarity, 4),
+                "chunk_index": meta.get("chunk_index", 0),
+            })
+
         return ApiResponse(
             status="success",
-            data={
-                "query": request.query,
-                "results": []
-            }
+            data={"query": query, "results": search_results}
         )
     except Exception as e:
+        logger.error(f"搜索失败: {e}")
         return ApiResponse(status="error", message=str(e))
 
 @app.get("/api/health")
@@ -532,18 +669,164 @@ async def health_check():
         }
     )
 
+
+# ====== 配置管理 API ======
+
+@app.get("/api/config")
+async def get_config():
+    """读取当前配置"""
+    try:
+        env = load_env()
+        config = load_config()
+        return ApiResponse(
+            status="success",
+            data={"env": env, "config": config}
+        )
+    except Exception as e:
+        return ApiResponse(status="error", message=str(e))
+
+
+class ConfigUpdateRequest(BaseModel):
+    env: dict = {}
+    config: dict = {}
+
+@app.put("/api/config")
+async def update_config(request: ConfigUpdateRequest):
+    """保存配置"""
+    try:
+        if request.env:
+            save_env(request.env)
+        if request.config:
+            save_config(request.config)
+        return ApiResponse(status="success", message="配置已保存")
+    except Exception as e:
+        return ApiResponse(status="error", message=str(e))
+
+
+# ====== 服务管理 API ======
+
+def _check_port(port: int) -> bool:
+    """检查端口是否被占用"""
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(('127.0.0.1', port))
+        sock.close()
+        return result == 0
+    except Exception:
+        return False
+
+def _get_pid_by_port(port: int) -> str:
+    """获取占用指定端口的进程 PID"""
+    try:
+        result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, timeout=5)
+        for line in result.stdout.split('\n'):
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.split()
+                return parts[-1]
+    except Exception:
+        pass
+    return "-"
+
+SERVICE_DEFS = {
+    "chroma": {"name": "ChromaDB", "module": "servers.chroma", "port": 9898},
+    "mcp":    {"name": "MCP Server", "module": "servers.mcp", "port": 9766},
+    "api":    {"name": "API Server", "module": "servers.api", "port": 9767},
+    "rerank": {"name": "Rerank Server", "module": "servers.rerank", "port": 5001},
+}
+
+@app.get("/api/services")
+async def list_services():
+    """获取所有服务状态"""
+    try:
+        services = []
+        for key, svc in SERVICE_DEFS.items():
+            online = _check_port(svc["port"])
+            services.append({
+                "key": key,
+                "name": svc["name"],
+                "port": svc["port"],
+                "status": "online" if online else "offline",
+                "pid": _get_pid_by_port(svc["port"]) if online else "-",
+            })
+        # Embedding 外部服务
+        emb_online = _check_port(5000)
+        services.append({
+            "key": "embedding",
+            "name": "Embedding 服务",
+            "port": 5000,
+            "status": "online" if emb_online else "offline",
+            "pid": _get_pid_by_port(5000) if emb_online else "-",
+        })
+        return ApiResponse(status="success", data=services)
+    except Exception as e:
+        return ApiResponse(status="error", message=str(e))
+
+
+@app.post("/api/services/{service_key}/start")
+async def start_service(service_key: str):
+    """启动指定服务"""
+    if service_key not in SERVICE_DEFS:
+        return ApiResponse(status="error", message=f"未知服务: {service_key}")
+    svc = SERVICE_DEFS[service_key]
+    if _check_port(svc["port"]):
+        return ApiResponse(status="success", message=f"{svc['name']} 已在运行")
+    try:
+        process = subprocess.Popen(
+            [sys.executable, "-m", svc["module"]],
+            cwd=ROOT,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
+        )
+        time.sleep(2)
+        if _check_port(svc["port"]):
+            return ApiResponse(status="success", message=f"{svc['name']} 已启动 (PID: {process.pid})")
+        else:
+            return ApiResponse(status="error", message=f"{svc['name']} 启动超时")
+    except Exception as e:
+        return ApiResponse(status="error", message=str(e))
+
+
+@app.post("/api/services/{service_key}/stop")
+async def stop_service(service_key: str):
+    """停止指定服务"""
+    if service_key not in SERVICE_DEFS:
+        return ApiResponse(status="error", message=f"未知服务: {service_key}")
+    svc = SERVICE_DEFS[service_key]
+    if not _check_port(svc["port"]):
+        return ApiResponse(status="success", message=f"{svc['name']} 未在运行")
+    try:
+        if sys.platform == 'win32':
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True
+            )
+            for line in result.stdout.split('\n'):
+                if f":{svc['port']}" in line and "LISTENING" in line:
+                    parts = line.split()
+                    pid = int(parts[-1])
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                                   capture_output=True, check=False)
+                    return ApiResponse(status="success", message=f"{svc['name']} 已停止 (PID: {pid})")
+        return ApiResponse(status="error", message=f"未找到 {svc['name']} 进程")
+    except Exception as e:
+        return ApiResponse(status="error", message=str(e))
+
 # 挂载前端静态文件
 frontend_dist = ROOT / "frontend" / "dist"
 if frontend_dist.exists():
-    app.mount("/static", StaticFiles(directory=str(frontend_dist)), name="static")
+    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
     
-    @app.get("/")
-    async def index():
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        """SPA fallback: 所有非 API 路由返回 index.html"""
+        file_path = frontend_dist / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(str(file_path))
         return FileResponse(str(frontend_dist / "index.html"))
 
 def main():
     """主函数"""
-    logger.info("Ezy-RAG API Server V0.0.14 启动中...")
+    logger.info("Ezy-RAG API Server V1.0.0 启动中...")
     logger.info(f"ChromaDB Server: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
     logger.info(f"Embedding 服务: {os.getenv('EMBEDDING_API_URL', 'http://127.0.0.1:5000')}")
     logger.info(f"监听: http://{os.getenv('MCP_SERVER_HOST', '127.0.0.1')}:9767")

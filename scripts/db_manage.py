@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — 数据库管理脚本
+Ezy-RAG V1.0.0 — 数据库管理脚本
 用法: python db_manage.py
 
 功能：
@@ -20,7 +20,7 @@ import shutil
 from pathlib import Path
 from typing import List, Dict, Optional
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 import chromadb
@@ -503,7 +503,7 @@ def main():
         # 交互式菜单
         while True:
             print("\n" + "=" * 60)
-            print("  Ezy-RAG V0.0.14 — 数据库管理")
+            print("  Ezy-RAG V1.0.0 — 数据库管理")
             print("=" * 60)
             print("1. 查看文档映射表")
             print("2. 查看数据库状态")

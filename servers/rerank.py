@@ -37,7 +37,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("RerankServer")
 
-app = FastAPI(title="Ezy-RAG Rerank Server", version="0.0.14")
+app = FastAPI(title="Ezy-RAG Rerank Server", version="1.0.0")
 
 _model = None
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — 服务管理脚本
+Ezy-RAG V1.0.0 — 服务管理脚本
 用法: python start_all.py
 """
 import subprocess
@@ -11,7 +11,7 @@ import os
 import signal
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).parent.parent
 PROCESSES = {}
 
 # 我们自己服务的端口
@@ -260,7 +260,7 @@ def main():
     """主函数"""
     while True:
         print("\n" + "=" * 60)
-        print("  Ezy-RAG V0.0.14 — 服务管理")
+        print("  Ezy-RAG V1.0.0 — 服务管理")
         print("=" * 60)
         print("1. 查看服务状态")
         print("2. 启动服务")

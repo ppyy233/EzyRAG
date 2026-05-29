@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — 文档仓库
+Ezy-RAG V1.0.0 — 文档仓库
 封装所有向量数据库操作，实现文档级 CRUD 和 ACID 事务
 
 核心设计：
@@ -59,12 +59,12 @@ class DocumentRepository:
 
     # ====== Create ======
 
-    def add(self, doc: dict, chunk_cfg: dict) -> int:
+    def add(self, doc: dict, chunk_cfg: dict, on_progress=None, cancel_check=None) -> int:
         """添加单个文档，返回添加的 chunk 数量"""
         chunks = chunk_single_document(doc, chunk_cfg)
         if not chunks:
             return 0
-        self._batch_add(chunks)
+        self._batch_add(chunks, on_progress=on_progress, cancel_check=cancel_check)
         return len(chunks)
 
     def add_many(self, documents: List[dict], chunk_cfg: dict) -> int:
@@ -227,10 +227,13 @@ class DocumentRepository:
 
     # ====== 内部方法 ======
 
-    def _batch_add(self, chunks: List[dict], batch_size: int = 50):
+    def _batch_add(self, chunks: List[dict], batch_size: int = 50, on_progress=None, cancel_check=None):
         """批量向量化 + 入库"""
         total = len(chunks)
         for i in range(0, total, batch_size):
+            if cancel_check and cancel_check():
+                logger.info("向量化已取消")
+                raise Exception("向量化已取消")
             batch = chunks[i:i + batch_size]
             ids = [c["id"] for c in batch]
             texts = [c["text"] for c in batch]
@@ -240,6 +243,9 @@ class DocumentRepository:
             self.collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metas)
             done = i + len(batch)
             pct = min(100, int(done / total * 100))
-            print(f"  进度: {done}/{total} ({pct}%)")
+            msg = f"进度: {done}/{total} ({pct}%)"
+            print(f"  {msg}")
+            if on_progress:
+                on_progress(done, total, pct, msg)
             if i + batch_size < total:
                 time.sleep(0.1)

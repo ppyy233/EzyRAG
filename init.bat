@@ -1,3 +1,4 @@
 @echo off
-python init.py
+chcp 65001 >nul
+"%~dp0.venv\Scripts\python.exe" "%~dp0scripts\init.py" %*
 pause

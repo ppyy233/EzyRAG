@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — 配置加载模块
+Ezy-RAG V1.0.0 — 配置加载模块
 位于 config/ 目录下，负责加载 .env 和 config.json
 """
 import os
@@ -75,3 +75,35 @@ def get_retrieval_config() -> dict:
     """获取检索配置"""
     config = load_config()
     return config["retrieval"]
+
+
+def load_env() -> dict:
+    """加载 .env 文件为字典"""
+    env = {}
+    if ENV_FILE.exists():
+        with open(ENV_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    env[key.strip()] = value.strip()
+    return env
+
+
+def save_env(env: dict):
+    """保存字典到 .env 文件"""
+    with open(ENV_FILE, 'w', encoding='utf-8') as f:
+        f.write("# Ezy-RAG 环境配置\n\n")
+        for key in ["EMBEDDING_API_URL", "EMBEDDING_API_KEY", "EMBEDDING_MODEL", "EMBEDDING_DIM"]:
+            f.write(f"{key}={env.get(key, '')}\n")
+        f.write("\n")
+        for key in ["RERANK_ENABLED", "RERANK_API_URL", "RERANK_API_KEY", "RERANK_MODEL"]:
+            f.write(f"{key}={env.get(key, '')}\n")
+        f.write("\n")
+        for key in ["CHROMA_SERVER_HOST", "CHROMA_SERVER_PORT"]:
+            f.write(f"{key}={env.get(key, '')}\n")
+        f.write("\n")
+        for key in ["MCP_SERVER_HOST", "MCP_SERVER_PORT"]:
+            f.write(f"{key}={env.get(key, '')}\n")
+        f.write("\n")
+        f.write(f"CHUNK_TEMPLATE={env.get('CHUNK_TEMPLATE', 'academic')}\n")

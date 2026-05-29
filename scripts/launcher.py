@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — 统一启动器
+Ezy-RAG V1.0.0 — 统一启动器
 一键启动所有服务，包括后端 API、MCP、ChromaDB、前端
 
 用法:
@@ -17,10 +17,8 @@ import signal
 import argparse
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
-
-import settings
 
 # 服务配置
 SERVICES = {
@@ -154,7 +152,7 @@ def main():
     args = parser.parse_args()
     
     print("=" * 60)
-    print("  Ezy-RAG V0.0.14 — 统一启动器")
+    print("  Ezy-RAG V1.0.0 — 统一启动器")
     print("=" * 60)
     
     # 显示状态

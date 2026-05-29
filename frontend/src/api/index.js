@@ -37,8 +37,22 @@ export const uploadDocument = (file) => {
 export const syncDocuments = () => api.post('/sync')
 export const rebuildDatabase = () => api.post('/rebuild')
 
+// 向量库文档管理
+export const getVectorDocs = () => api.get('/vector-docs')
+export const deleteVectorDoc = (source) => api.delete('/vector-docs', { data: { source } })
+export const cancelVectorization = () => api.post('/documents/cancel')
+
 // 搜索
 export const search = (query) => api.post('/search', { query })
+
+// 配置
+export const getConfig = () => api.get('/config')
+export const saveConfig = (data) => api.put('/config', data)
+
+// 服务管理
+export const getServices = () => api.get('/services')
+export const startService = (key) => api.post(`/services/${key}/start`)
+export const stopService = (key) => api.post(`/services/${key}/stop`)
 
 // 健康检查
 export const getHealth = () => api.get('/health')

@@ -32,7 +32,7 @@
         <div v-for="(result, index) in results" :key="index" class="result-item">
           <div class="result-header">
             <span class="result-index">{{ index + 1 }}</span>
-            <span class="result-source">{{ result.source }}</span>
+            <span class="result-source">{{ result.filename }}</span>
             <el-tag :type="getSimilarityType(result.similarity)" size="small">
               相似度: {{ (result.similarity * 100).toFixed(2) }}%
             </el-tag>
