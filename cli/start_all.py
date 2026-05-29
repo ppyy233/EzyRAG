@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.17 - 服务管理脚本
+Ezy-RAG V0.0.18 - 服务管理脚本
 用法: python start_all.py
 """
 import subprocess
@@ -11,7 +11,7 @@ import os
 import signal
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from dotenv import load_dotenv
@@ -364,8 +364,9 @@ def check_orphan_records():
     try:
         import chromadb
         from config.settings import get_collection_name
-        from core.scheduler import get_scheduler
-        from core.repository import DocumentRepository
+        from config.pointer import get_active_collection
+        from core.api import EmbeddingAPI
+        from core.database import DocumentDatabase
 
         client = chromadb.HttpClient(
             host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
@@ -373,13 +374,13 @@ def check_orphan_records():
         )
         client.heartbeat()
 
-        collection_name = get_collection_name()
+        collection_name = get_active_collection(get_collection_name())
         collection = client.get_collection(name=collection_name)
-        emb_proxy = get_scheduler()
-        repo = DocumentRepository(collection, emb_proxy)
+        emb_api = EmbeddingAPI()
+        db = DocumentDatabase(collection, emb_api, client, collection_name)
 
         docs_dir = str(ROOT / "data" / "docs")
-        orphans = repo.check_orphan_records(docs_dir)
+        orphans = db.check_orphan_records(docs_dir)
 
         if orphans:
             print(f"\n  [!] 检测到 {len(orphans)} 个孤立记录（本地文件已删除）")
@@ -404,7 +405,7 @@ def main():
 
     while True:
         print("\n" + "=" * 60)
-        print("  Ezy-RAG V0.0.17 - 服务管理")
+        print("  Ezy-RAG V0.0.18 - 服务管理")
         print("=" * 60)
         print("1. 查看服务状态")
         print("2. 查看当前配置")
@@ -441,14 +442,14 @@ def main():
             sub_choice = input("\n请选择: ").strip()
             if sub_choice == "1":
                 if embedding_mode == "local":
-                    start_service("Embedding", "local.embedding", "127.0.0.1", OUR_PORTS["Embedding"])
+                    start_service("Embedding", "servers.embedding", "127.0.0.1", OUR_PORTS["Embedding"])
                 start_service("ChromaDB", "servers.chroma", chroma_host, chroma_port)
                 start_service("MCP", "servers.mcp", mcp_host, mcp_port)
                 if rerank_enabled and rerank_mode == "local":
-                    start_service("Rerank", "local.rerank", "127.0.0.1", OUR_PORTS["Rerank"])
+                    start_service("Rerank", "servers.rerank", "127.0.0.1", OUR_PORTS["Rerank"])
             elif sub_choice == "2":
                 if embedding_mode == "local":
-                    start_service("Embedding", "local.embedding", "127.0.0.1", OUR_PORTS["Embedding"])
+                    start_service("Embedding", "servers.embedding", "127.0.0.1", OUR_PORTS["Embedding"])
                 else:
                     print("[INFO] 云端模式无需启动本地 Embedding 服务")
             elif sub_choice == "3":
@@ -463,7 +464,7 @@ def main():
                 else:
                     start_service("MCP", "servers.mcp", mcp_host, mcp_port)
             elif sub_choice == "5" and rerank_enabled and rerank_mode == "local":
-                start_service("Rerank", "local.rerank", "127.0.0.1", OUR_PORTS["Rerank"])
+                start_service("Rerank", "servers.rerank", "127.0.0.1", OUR_PORTS["Rerank"])
             elif sub_choice == "5" or sub_choice == "6":
                 continue
             else:
@@ -537,16 +538,16 @@ def main():
                     stop_service("Rerank")
                 time.sleep(2)
                 if embedding_mode == "local":
-                    start_service("Embedding", "local.embedding", "127.0.0.1", OUR_PORTS["Embedding"])
+                    start_service("Embedding", "servers.embedding", "127.0.0.1", OUR_PORTS["Embedding"])
                 start_service("ChromaDB", "servers.chroma", chroma_host, chroma_port)
                 start_service("MCP", "servers.mcp", mcp_host, mcp_port)
                 if rerank_enabled and rerank_mode == "local":
-                    start_service("Rerank", "local.rerank", "127.0.0.1", OUR_PORTS["Rerank"])
+                    start_service("Rerank", "servers.rerank", "127.0.0.1", OUR_PORTS["Rerank"])
             elif sub_choice == "2":
                 if embedding_mode == "local":
                     stop_service("Embedding")
                     time.sleep(2)
-                    start_service("Embedding", "local.embedding", "127.0.0.1", OUR_PORTS["Embedding"])
+                    start_service("Embedding", "servers.embedding", "127.0.0.1", OUR_PORTS["Embedding"])
                 else:
                     print("[INFO] 云端模式无需重启本地 Embedding 服务")
             elif sub_choice == "3":
@@ -560,7 +561,7 @@ def main():
             elif sub_choice == "5" and rerank_enabled and rerank_mode == "local":
                 stop_service("Rerank")
                 time.sleep(2)
-                start_service("Rerank", "local.rerank", "127.0.0.1", OUR_PORTS["Rerank"])
+                start_service("Rerank", "servers.rerank", "127.0.0.1", OUR_PORTS["Rerank"])
             elif sub_choice == "5" or sub_choice == "6":
                 continue
             else:

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.17 — 统一命令行入口
+Ezy-RAG V0.0.18 — 统一命令行入口
 用法: python ezyrag.py <command> [args...]
 
 命令：
@@ -34,7 +34,7 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 
@@ -209,7 +209,7 @@ def cmd_quickstart():
     print_step("3", "配置")
     print_info("即将启动配置向导...")
     pause()
-    run_script("init.py")
+    run_script("cli/init.py")
     
     # Step 4: 添加本地文档（可选）
     print_step("4", "添加本地文档")
@@ -226,7 +226,7 @@ def cmd_quickstart():
             choice = input("  是否添加到向量库？(Y/n): ").strip().lower()
             if choice != 'n':
                 print_info("正在添加文档...")
-                run_script("db_manage.py", ["add", "--all"])
+                run_script("cli/db_manage.py", ["add", "--all"])
             else:
                 print_info("跳过添加文档")
         else:
@@ -238,7 +238,7 @@ def cmd_quickstart():
     print_step("5", "启动服务")
     print_info("即将启动服务管理...")
     pause()
-    run_script("start_all.py")
+    run_script("cli/start_all.py")
     
     # 完成
     print_header("Quick Start 完成！")
@@ -259,7 +259,7 @@ def cmd_init():
     print_header("配置管理")
     print_info("即将启动配置管理脚本...")
     pause()
-    run_script("init.py")
+    run_script("cli/init.py")
 
 
 # ============================================================
@@ -271,7 +271,7 @@ def cmd_service():
     print_header("服务管理")
     print_info("即将启动服务管理脚本...")
     pause()
-    run_script("start_all.py")
+    run_script("cli/start_all.py")
 
 
 # ============================================================
@@ -285,12 +285,12 @@ def cmd_db(args):
         print_header("数据库管理")
         print_info("即将启动数据库管理脚本...")
         pause()
-        run_script("db_manage.py")
+        run_script("cli/db_manage.py")
     else:
         # 有参数，转发命令
         print(f"\n  执行: python db_manage.py {' '.join(args)}")
         print("  " + "-" * 40)
-        run_script("db_manage.py", args)
+        run_script("cli/db_manage.py", args)
 
 
 # ============================================================
@@ -308,9 +308,9 @@ def cmd_build(args):
         print_info("python ezyrag.py build -t chinese   # 指定切块模板")
         return
     
-    print(f"\n  执行: python -m core.builder {' '.join(args)}")
+    print(f"\n  执行: python -m core.database {' '.join(args)}")
     print("  " + "-" * 40)
-    run_module("core.builder", args)
+    run_module("core.database", args)
 
 
 # ============================================================
@@ -404,17 +404,10 @@ def cmd_health():
     if chroma_ok:
         try:
             import chromadb
+            from config.pointer import get_active_collection
             client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
             
-            # 获取集合名
-            pointer_file = ROOT / "runtime" / "state" / "collection_pointer.json"
-            if pointer_file.exists():
-                import json
-                with open(pointer_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    collection_name = data.get("default_collection", "default_collection")
-            else:
-                collection_name = "default_collection"
+            collection_name = get_active_collection("default_collection")
             
             try:
                 collection = client.get_collection(name=collection_name)
@@ -463,7 +456,7 @@ def show_help():
     """显示帮助信息"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║  Ezy-RAG V0.0.17 — 知识库系统                                ║
+║  Ezy-RAG V0.0.18 — 知识库系统                                ║
 ╚══════════════════════════════════════════════════════════════╝
 
 用法：

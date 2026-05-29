@@ -1,7 +1,7 @@
 {
-  "start_time": "2026-05-29T14:49:45.901053",
-  "total": 27,
-  "passed": 27,
+  "start_time": "2026-05-29T15:16:40.052409",
+  "total": 25,
+  "passed": 25,
   "failed": 0,
   "results": [
     {
@@ -40,19 +40,34 @@
       "details": "chunks=1"
     },
     {
-      "name": "Update document",
+      "name": "Update document (shadow strategy)",
       "passed": true,
       "details": "chunks=1"
     },
     {
-      "name": "Document updated correctly",
+      "name": "Document exists after update",
       "passed": true,
       "details": ""
     },
     {
-      "name": "Data loss on update failure",
+      "name": "Document info available",
       "passed": true,
-      "details": "Document should not exist after failed update (data loss)"
+      "details": ""
+    },
+    {
+      "name": "Old data preserved on failure",
+      "passed": true,
+      "details": "Document should still exist with old content"
+    },
+    {
+      "name": "Old data preserved on copy failure",
+      "passed": true,
+      "details": "Document should still exist with old content"
+    },
+    {
+      "name": "Shadow collection cleaned up",
+      "passed": true,
+      "details": "Found 0 shadow collections"
     },
     {
       "name": "Initial state: doc_a added",
@@ -80,49 +95,24 @@
       "details": ""
     },
     {
-      "name": "Build full completed",
+      "name": "doc_a preserved on failure",
       "passed": true,
-      "details": "chunks=2"
+      "details": "Document A should still exist with old content"
     },
     {
-      "name": "Collection created",
+      "name": "doc_b preserved on failure",
+      "passed": true,
+      "details": "Document B should still exist with old content"
+    },
+    {
+      "name": "cleanup_duplicates method exists",
       "passed": true,
       "details": ""
     },
     {
-      "name": "Data integrity",
+      "name": "cleanup_duplicates callable",
       "passed": true,
-      "details": ""
-    },
-    {
-      "name": "Old collection preserved on failure",
-      "passed": true,
-      "details": ""
-    },
-    {
-      "name": "Initial documents added",
-      "passed": true,
-      "details": "count=3"
-    },
-    {
-      "name": "Original docs preserved after crash",
-      "passed": true,
-      "details": "count=4"
-    },
-    {
-      "name": "Doc doc1.txt exists",
-      "passed": true,
-      "details": ""
-    },
-    {
-      "name": "Doc doc2.txt exists",
-      "passed": true,
-      "details": ""
-    },
-    {
-      "name": "Doc doc3.txt exists",
-      "passed": true,
-      "details": ""
+      "details": "cleaned=0"
     },
     {
       "name": "Hash functions consistent",

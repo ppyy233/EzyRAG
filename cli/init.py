@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.17 — 配置管理脚本
-用法: python init.py
+Ezy-RAG V0.0.18 — 配置管理脚本
+用法: python cli/init.py
 """
 import os
 import json
 import shutil
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT / "config"
 ENV_FILE = CONFIG_DIR / ".env"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -32,7 +32,7 @@ def save_env(env: dict):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(ENV_FILE, 'w', encoding='utf-8') as f:
         f.write("# ============================================================\n")
-        f.write("# Ezy-RAG V0.0.17 — 环境配置\n")
+        f.write("# Ezy-RAG V0.0.18 — 环境配置\n")
         f.write("# 由 init.py 生成\n")
         f.write("# ============================================================\n\n")
 
@@ -46,7 +46,7 @@ def save_env(env: dict):
             "EMBEDDING_CLOUD_URL": "https://api.siliconflow.cn/v1/embeddings",
             "EMBEDDING_CLOUD_API_KEY": "",
             "EMBEDDING_CLOUD_MODEL": "BAAI/bge-m3",
-            "EMBEDDING_CLOUD_DIM": "1024"
+            "EMBEDDING_CLOUD_DIM": ""
         }
         for key, default in cloud_embedding.items():
             f.write(f"{key}={env.get(key, default)}\n")
@@ -55,7 +55,7 @@ def save_env(env: dict):
         local_embedding = {
             "EMBEDDING_LOCAL_URL": "http://127.0.0.1:1234/v1/embeddings",
             "EMBEDDING_LOCAL_MODEL_PATH": "data/models/embedding",
-            "EMBEDDING_LOCAL_DIM": "2560"
+            "EMBEDDING_LOCAL_DIM": ""
         }
         for key, default in local_embedding.items():
             f.write(f"{key}={env.get(key, default)}\n")
@@ -71,16 +71,17 @@ def save_env(env: dict):
 
         f.write("# 云端配置\n")
         cloud_rerank = {
-            "RERANK_CLOUD_URL": "https://api.cohere.com/v1/rerank",
+            "RERANK_CLOUD_URL": "https://api.siliconflow.cn/v1/rerank",
             "RERANK_CLOUD_API_KEY": "",
-            "RERANK_CLOUD_MODEL": "rerank-multilingual-v3.0"
+            "RERANK_CLOUD_MODEL": "BAAI/bge-reranker-v2-m3"
         }
         for key, default in cloud_rerank.items():
             f.write(f"{key}={env.get(key, default)}\n")
 
         f.write("\n# 本地配置\n")
         local_rerank = {
-            "RERANK_LOCAL_URL": "http://127.0.0.1:5001"
+            "RERANK_LOCAL_URL": "http://127.0.0.1:5001",
+            "RERANK_LOCAL_MODEL_PATH": "data/models/rerank"
         }
         for key, default in local_rerank.items():
             f.write(f"{key}={env.get(key, default)}\n")
@@ -434,15 +435,15 @@ def reset_config():
             "EMBEDDING_CLOUD_URL": "https://api.siliconflow.cn/v1/embeddings",
             "EMBEDDING_CLOUD_API_KEY": "",
             "EMBEDDING_CLOUD_MODEL": "BAAI/bge-m3",
-            "EMBEDDING_CLOUD_DIM": "1024",
+            "EMBEDDING_CLOUD_DIM": "",
             "EMBEDDING_LOCAL_URL": "http://127.0.0.1:1234/v1/embeddings",
             "EMBEDDING_LOCAL_MODEL_PATH": "data/models/embedding",
-            "EMBEDDING_LOCAL_DIM": "2560",
+            "EMBEDDING_LOCAL_DIM": "",
             "RERANK_ENABLED": "true",
             "RERANK_MODE": "local",
-            "RERANK_CLOUD_URL": "https://api.cohere.com/v1/rerank",
+            "RERANK_CLOUD_URL": "https://api.siliconflow.cn/v1/rerank",
             "RERANK_CLOUD_API_KEY": "",
-            "RERANK_CLOUD_MODEL": "rerank-multilingual-v3.0",
+            "RERANK_CLOUD_MODEL": "BAAI/bge-reranker-v2-m3",
             "RERANK_LOCAL_URL": "http://127.0.0.1:5001",
             "RERANK_LOCAL_MODEL_PATH": "data/models/rerank",
             "CHROMA_SERVER_HOST": "127.0.0.1",
@@ -549,7 +550,7 @@ def main():
 
     while True:
         print("\n" + "=" * 60)
-        print("  Ezy-RAG V0.0.17 — 配置管理")
+        print("  Ezy-RAG V0.0.18 — 配置管理")
         print("=" * 60)
         print("1. 查看配置")
         print("2. 更新配置")

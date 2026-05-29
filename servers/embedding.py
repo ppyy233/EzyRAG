@@ -4,9 +4,9 @@ Ezy-RAG — 本地 Embedding HTTP 服务
 加载 sentence-transformers 模型，暴露 OpenAI 兼容的 API 端点
 
 用法:
-  python -m local.embedding                # 默认 127.0.0.1:1234
-  python -m local.embedding --port 1235    # 自定义端口
-  python -m local.embedding --model BAAI/bge-large-zh-v1.5  # 指定模型
+  python -m servers.embedding                # 默认 127.0.0.1:1234
+  python -m servers.embedding --port 1235    # 自定义端口
+  python -m servers.embedding --model BAAI/bge-large-zh-v1.5  # 指定模型
 
 接口:
   POST /v1/embeddings  {"input": "...", "model": "...", "dimensions": 1024}
@@ -25,6 +25,8 @@ import argparse
 import logging
 from pathlib import Path
 from typing import Union
+
+import torch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -49,7 +51,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("EmbeddingServer")
 
-app = FastAPI(title="Ezy-RAG Embedding Server", version="0.0.17")
+app = FastAPI(title="Ezy-RAG Embedding Server", version="0.0.18")
 
 _model = None
 _model_name = None
@@ -111,8 +113,9 @@ async def create_embeddings(req: EmbeddingRequest):
     try:
         texts = req.input if isinstance(req.input, list) else [req.input]
         
-        # 生成 embedding
-        embeddings = _model.encode(texts, show_progress_bar=False)
+        # 生成 embedding（使用no_grad避免保存梯度，减少显存占用）
+        with torch.no_grad():
+            embeddings = _model.encode(texts, show_progress_bar=False)
         
         # 如果指定了维度，调整维度
         if req.dimensions is not None:
@@ -120,10 +123,8 @@ async def create_embeddings(req: EmbeddingRequest):
             adjusted_embeddings = []
             for emb in embeddings:
                 if len(emb) > target_dim:
-                    # 截断
                     adjusted_embeddings.append(emb[:target_dim].tolist())
                 elif len(emb) < target_dim:
-                    # 填充零
                     adjusted_embeddings.append(emb.tolist() + [0.0] * (target_dim - len(emb)))
                 else:
                     adjusted_embeddings.append(emb.tolist())
@@ -131,7 +132,10 @@ async def create_embeddings(req: EmbeddingRequest):
         else:
             embeddings = [emb.tolist() for emb in embeddings]
         
-        # 返回 OpenAI 兼容格式
+        # 清理GPU缓存，防止显存泄漏
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         return {
             "object": "list",
             "model": _model_name,
@@ -151,6 +155,9 @@ async def create_embeddings(req: EmbeddingRequest):
         }
     except Exception as e:
         logger.error(f"Embedding 失败: {e}")
+        # 异常时也清理GPU缓存
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

@@ -4,9 +4,9 @@ Ezy-RAG — 本地 Rerank HTTP 服务
 加载 cross-encoder 模型，暴露 POST /rerank 接口
 
 用法:
-  python -m local.rerank                # 默认 127.0.0.1:5001
-  python -m local.rerank --port 5002    # 自定义端口
-  python -m local.rerank --model BAAI/bge-reranker-v2-m3  # 指定模型
+  python -m servers.rerank                # 默认 127.0.0.1:5001
+  python -m servers.rerank --port 5002    # 自定义端口
+  python -m servers.rerank --model BAAI/bge-reranker-v2-m3  # 指定模型
 
 接口:
   POST /rerank  {"query": "...", "documents": ["...", ...]}
@@ -41,7 +41,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("RerankServer")
 
-app = FastAPI(title="Ezy-RAG Rerank Server", version="0.0.17")
+app = FastAPI(title="Ezy-RAG Rerank Server", version="0.0.18")
 
 _model = None
 

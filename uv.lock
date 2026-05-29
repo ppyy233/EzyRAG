@@ -334,7 +334,7 @@ wheels = [
 
 [[package]]
 name = "ezy-rag"
-version = "0.0.17"
+version = "0.0.18"
 source = { virtual = "." }
 dependencies = [
     { name = "beautifulsoup4" },

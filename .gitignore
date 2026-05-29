@@ -7,10 +7,13 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
 
 # IDE
 .idea/
+.vscode/
+*.swp
+*.swo
 
 # Logs
 *.log
@@ -30,8 +33,8 @@ data/models/*
 config/.env
 
 # Runtime generated files
-runtime/logs/
-runtime/state/
+runtime/logs/*
+runtime/state/*
 !runtime/logs/.gitkeep
 !runtime/state/.gitkeep
 
@@ -40,3 +43,15 @@ models/
 
 # Backup files
 *.backup
+*.bak
+
+# Test reports
+tests/*.json
+!tests/.gitkeep
+
+# uv lock file (optional, uncomment if not needed)
+# uv.lock
+
+# OS generated files
+.DS_Store
+Thumbs.db

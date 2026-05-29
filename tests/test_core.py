@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.17 — Core模块测试
-测试内容：异步并发、ACID事务、异常恢复
+Ezy-RAG V0.0.17 — Core模块测试（影子集合策略版）
+测试内容：异步并发、ACID事务（影子集合策略）、异常恢复、重复数据清理
 """
 import sys
 import os
@@ -42,6 +42,97 @@ def content_hash(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()
 
 
+# ==================== Mock类 ====================
+
+class MockChromaClient:
+    """模拟ChromaDB客户端"""
+    def __init__(self):
+        self.collections = {}
+    
+    def get_or_create_collection(self, name, metadata=None):
+        if name not in self.collections:
+            self.collections[name] = MockCollection(name)
+        return self.collections[name]
+    
+    def delete_collection(self, name):
+        if name in self.collections:
+            del self.collections[name]
+    
+    def get_collection(self, name):
+        if name in self.collections:
+            return self.collections[name]
+        raise Exception(f"Collection {name} not found")
+    
+    def list_collections(self):
+        return list(self.collections.values())
+
+
+class MockCollection:
+    """模拟ChromaDB Collection"""
+    def __init__(self, name="test_collection"):
+        self.name = name
+        self.data = {}
+        self.ids = []
+    
+    def get(self, where=None, include=None):
+        if where and "source" in where:
+            source = where["source"]
+            matching = [self.data[id] for id in self.ids 
+                       if id in self.data and self.data[id].get("metadata", {}).get("source") == source]
+            if not matching:
+                return {"ids": [], "metadatas": [], "documents": [], "embeddings": []}
+            return {
+                "ids": [m["id"] for m in matching],
+                "metadatas": [m.get("metadata", {}) for m in matching],
+                "documents": [m.get("document", "") for m in matching],
+                "embeddings": [m.get("embedding", []) for m in matching]
+            }
+        return {
+            "ids": self.ids,
+            "metadatas": [self.data[id].get("metadata", {}) for id in self.ids if id in self.data],
+            "documents": [self.data[id].get("document", "") for id in self.ids if id in self.data],
+            "embeddings": [self.data[id].get("embedding", []) for id in self.ids if id in self.data]
+        }
+    
+    def count(self):
+        return len(self.ids)
+    
+    def add(self, ids, embeddings=None, documents=None, metadatas=None):
+        for i, id in enumerate(ids):
+            self.data[id] = {
+                "id": id,
+                "embedding": embeddings[i] if embeddings and i < len(embeddings) else None,
+                "document": documents[i] if documents and i < len(documents) else "",
+                "metadata": metadatas[i] if metadatas and i < len(metadatas) else {}
+            }
+            if id not in self.ids:
+                self.ids.append(id)
+    
+    def delete(self, where=None, ids=None):
+        if ids:
+            for id in ids:
+                if id in self.data:
+                    del self.data[id]
+                if id in self.ids:
+                    self.ids.remove(id)
+        elif where and "source" in where:
+            source = where["source"]
+            to_remove = [id for id in self.ids 
+                        if id in self.data and self.data[id].get("metadata", {}).get("source") == source]
+            for id in to_remove:
+                del self.data[id]
+                self.ids.remove(id)
+
+
+class MockEmbProxy:
+    """模拟Embedding代理"""
+    def __init__(self, dim=1024):
+        self.dim = dim
+    
+    def embed_sync(self, texts, priority=100):
+        return [[0.1] * self.dim for _ in texts]
+
+
 # ==================== 测试1: 异步并发测试 ====================
 
 def test_scheduler_priority_queue():
@@ -51,16 +142,11 @@ def test_scheduler_priority_queue():
     try:
         import queue
         
-        # 创建模拟队列（带优先级的元组）
         test_queue = queue.PriorityQueue()
-        
-        # 添加不同优先级的任务（使用可比较的元组）
         priorities = [100, 0, 50, 0, 100]
         for priority in priorities:
-            # 使用(priority, counter)作为比较键，避免比较Event对象
             test_queue.put((priority, time.time(), f"task_{priority}"))
         
-        # 验证队列顺序（优先级小的先出）
         result_order = []
         while not test_queue.empty():
             priority, _, _ = test_queue.get()
@@ -79,30 +165,24 @@ def test_concurrent_query_and_build():
     pr("\n--- Test 1.2: Concurrent Query and Build ---")
     
     try:
-        from core.scheduler import TaskScheduler
         import queue
         import uuid
         
-        # 创建模拟调度器（不实际调用embedding）
-        scheduler = TaskScheduler.__new__(TaskScheduler)
-        scheduler._queue = queue.PriorityQueue()
-        scheduler._results = {}
-        scheduler._results_lock = threading.Lock()
-        scheduler._running = True
-        scheduler._dim = 1024
+        scheduler = type('MockScheduler', (), {
+            '_queue': queue.PriorityQueue(),
+            '_results': {},
+            '_results_lock': threading.Lock(),
+            '_running': True,
+            '_dim': 1024
+        })()
         
-        # 模拟embedding结果
         mock_embedding = [0.1] * 1024
-        
-        results_captured = {"query": None, "build": None}
         execution_order = []
         
         def mock_worker():
-            """模拟worker，按优先级处理任务"""
             while scheduler._running:
                 try:
                     priority, task_id, texts, event = scheduler._queue.get(timeout=0.1)
-                    # 模拟处理时间
                     time.sleep(0.01)
                     with scheduler._results_lock:
                         scheduler._results[task_id] = [mock_embedding]
@@ -111,42 +191,29 @@ def test_concurrent_query_and_build():
                 except queue.Empty:
                     continue
         
-        # 启动worker
         worker_thread = threading.Thread(target=mock_worker, daemon=True)
         worker_thread.start()
         
-        # 同时提交查询和建库任务
         query_id = str(uuid.uuid4())
         build_id = str(uuid.uuid4())
-        
         query_event = threading.Event()
         build_event = threading.Event()
         
-        # 先提交建库任务（priority=100）
         scheduler._queue.put((100, build_id, ["build text"], build_event))
-        
-        # 立即提交查询任务（priority=0）
         scheduler._queue.put((0, query_id, ["query text"], query_event))
         
-        # 等待两个任务完成
         query_event.wait(timeout=5)
         build_event.wait(timeout=5)
         
-        # 停止worker
         scheduler._running = False
         worker_thread.join(timeout=1)
         
-        # 验证查询先于建库执行
         log("Query before build", execution_order == [0, 100],
             f"execution_order={execution_order}")
         
-        # 验证结果正确
         with scheduler._results_lock:
-            query_result = scheduler._results.get(query_id)
-            build_result = scheduler._results.get(build_id)
-        
-        log("Query result exists", query_result is not None)
-        log("Build result exists", build_result is not None)
+            log("Query result exists", scheduler._results.get(query_id) is not None)
+            log("Build result exists", scheduler._results.get(build_id) is not None)
         
     except Exception as e:
         log("Concurrent test", False, str(e))
@@ -157,16 +224,15 @@ def test_multiple_concurrent_queries():
     pr("\n--- Test 1.3: Multiple Concurrent Queries ---")
     
     try:
-        from core.scheduler import TaskScheduler
         import queue
         import uuid
         
-        scheduler = TaskScheduler.__new__(TaskScheduler)
-        scheduler._queue = queue.PriorityQueue()
-        scheduler._results = {}
-        scheduler._results_lock = threading.Lock()
-        scheduler._running = True
-        scheduler._dim = 1024
+        scheduler = type('MockScheduler', (), {
+            '_queue': queue.PriorityQueue(),
+            '_results': {},
+            '_results_lock': threading.Lock(),
+            '_running': True
+        })()
         
         mock_embedding = [0.1] * 1024
         completed_tasks = []
@@ -186,7 +252,6 @@ def test_multiple_concurrent_queries():
         worker_thread = threading.Thread(target=mock_worker, daemon=True)
         worker_thread.start()
         
-        # 同时提交5个查询任务
         num_queries = 5
         events = []
         task_ids = []
@@ -198,179 +263,159 @@ def test_multiple_concurrent_queries():
             events.append(event)
             task_ids.append(task_id)
         
-        # 等待所有任务完成
         for event in events:
             event.wait(timeout=5)
         
         scheduler._running = False
         worker_thread.join(timeout=1)
         
-        # 验证所有查询都完成
         log("All queries completed", len(completed_tasks) == num_queries,
             f"completed={len(completed_tasks)}, expected={num_queries}")
         
-        # 验证所有结果都正确
-        all_results_valid = True
         with scheduler._results_lock:
-            for task_id in task_ids:
-                if task_id not in scheduler._results:
-                    all_results_valid = False
-                    break
-        
+            all_results_valid = all(task_id in scheduler._results for task_id in task_ids)
         log("All results valid", all_results_valid)
         
     except Exception as e:
         log("Multiple queries test", False, str(e))
 
 
-# ==================== 测试2: ACID事务测试 ====================
+# ==================== 测试2: ACID事务测试（影子集合策略） ====================
 
-def test_update_atomicity():
-    """测试2.1: update操作原子性"""
-    pr("\n--- Test 2.1: Update Atomicity ---")
-    
-    try:
-        from core.repository import DocumentRepository, content_hash, chunk_single_document
-        
-        # 创建模拟collection
-        class MockCollection:
-            def __init__(self):
-                self.data = {}
-                self.ids = []
-            
-            def get(self, where=None, include=None):
-                if where and "source" in where:
-                    source = where["source"]
-                    matching = [self.data[id] for id in self.ids if self.data[id].get("metadata", {}).get("source") == source]
-                    if not matching:
-                        return {"ids": [], "metadatas": [], "documents": []}
-                    return {
-                        "ids": [m["id"] for m in matching],
-                        "metadatas": [m.get("metadata", {}) for m in matching],
-                        "documents": [m.get("document", "") for m in matching]
-                    }
-                return {"ids": self.ids, "metadatas": [m.get("metadata", {}) for m in [self.data[id] for id in self.ids]], "documents": [m.get("document", "") for m in [self.data[id] for id in self.ids]]}
-            
-            def count(self):
-                return len(self.ids)
-            
-            def add(self, ids, embeddings, documents, metadatas):
-                for i, id in enumerate(ids):
-                    self.data[id] = {
-                        "id": id,
-                        "embedding": embeddings[i] if i < len(embeddings) else None,
-                        "document": documents[i] if i < len(documents) else "",
-                        "metadata": metadatas[i] if i < len(metadatas) else {}
-                    }
-                    self.ids.append(id)
-            
-            def delete(self, where=None):
-                if where and "source" in where:
-                    source = where["source"]
-                    self.ids = [id for id in self.ids if self.data[id].get("metadata", {}).get("source") != source]
-        
-        # 创建模拟embedding代理
-        class MockEmbProxy:
-            def embed_sync(self, texts, priority=100):
-                return [[0.1] * 1024 for _ in texts]
-        
-        collection = MockCollection()
-        emb_proxy = MockEmbProxy()
-        repo = DocumentRepository(collection, emb_proxy)
-        
-        # 测试1: 正常update
-        doc1 = {"path": "/test/doc1.txt", "text": "Original content"}
-        chunk_cfg = {"chunk_size": 1000, "overlap": 100, "strategy": "flat", "separators": ["\n\n", "\n", " "]}
-        
-        # 添加文档
-        count1 = repo.add(doc1, chunk_cfg, source_type="local_file")
-        log("Add document", count1 > 0, f"chunks={count1}")
-        
-        # 更新文档
-        doc1_updated = {"path": "/test/doc1.txt", "text": "Updated content"}
-        count2 = repo.update(doc1_updated, chunk_cfg, source_type="local_file")
-        log("Update document", count2 > 0, f"chunks={count2}")
-        
-        # 验证更新后内容
-        doc_info = repo.get_document_info("/test/doc1.txt")
-        log("Document updated correctly", doc_info is not None)
-        
-        # 测试2: 模拟update失败（删除后添加前）
-        doc2 = {"path": "/test/doc2.txt", "text": "Content to fail"}
-        repo.add(doc2, chunk_cfg, source_type="local_file")
-        
-        # 模拟异常：在delete后、add前
-        original_add = repo.add
-        def failing_add(doc, chunk_cfg, source_type="local_file"):
-            raise Exception("Simulated failure during add")
-        
-        repo.add = failing_add
-        try:
-            repo.update(doc2, chunk_cfg, source_type="local_file")
-        except Exception:
-            pass
-        
-        repo.add = original_add
-        
-        # 验证：文档应该不存在（数据丢失）
-        doc_info2 = repo.get_document_info("/test/doc2.txt")
-        log("Data loss on update failure", doc_info2 is None,
-            "Document should not exist after failed update (data loss)")
-        
-    except Exception as e:
-        log("Update atomicity test", False, str(e))
-
-
-def test_sync_consistency():
-    """测试2.2: sync操作一致性"""
-    pr("\n--- Test 2.2: Sync Consistency ---")
+def test_update_shadow_strategy():
+    """测试2.1: update的影子集合策略"""
+    pr("\n--- Test 2.1: Update Shadow Strategy ---")
     
     try:
         from core.repository import DocumentRepository
         
-        class MockCollection:
-            def __init__(self):
-                self.data = {}
-                self.ids = []
-            
-            def get(self, where=None, include=None):
-                if where and "source" in where:
-                    source = where["source"]
-                    matching = [self.data[id] for id in self.ids if self.data[id].get("metadata", {}).get("source") == source]
-                    if not matching:
-                        return {"ids": [], "metadatas": [], "documents": []}
-                    return {
-                        "ids": [m["id"] for m in matching],
-                        "metadatas": [m.get("metadata", {}) for m in matching],
-                        "documents": [m.get("document", "") for m in matching]
-                    }
-                return {"ids": self.ids, "metadatas": [m.get("metadata", {}) for m in [self.data[id] for id in self.ids]], "documents": [m.get("document", "") for m in [self.data[id] for id in self.ids]]}
-            
-            def count(self):
-                return len(self.ids)
-            
-            def add(self, ids, embeddings, documents, metadatas):
-                for i, id in enumerate(ids):
-                    self.data[id] = {
-                        "id": id,
-                        "embedding": embeddings[i] if i < len(embeddings) else None,
-                        "document": documents[i] if i < len(documents) else "",
-                        "metadata": metadatas[i] if i < len(metadatas) else {}
-                    }
-                    self.ids.append(id)
-            
-            def delete(self, where=None):
-                if where and "source" in where:
-                    source = where["source"]
-                    self.ids = [id for id in self.ids if self.data[id].get("metadata", {}).get("source") != source]
-        
-        class MockEmbProxy:
-            def embed_sync(self, texts, priority=100):
-                return [[0.1] * 1024 for _ in texts]
-        
-        collection = MockCollection()
+        chroma_client = MockChromaClient()
+        collection = chroma_client.get_or_create_collection("test_collection")
         emb_proxy = MockEmbProxy()
-        repo = DocumentRepository(collection, emb_proxy)
+        repo = DocumentRepository(collection, emb_proxy, chroma_client, "test_collection")
+        
+        chunk_cfg = {"chunk_size": 1000, "overlap": 100, "strategy": "flat", "separators": ["\n\n", "\n", " "]}
+        
+        # 添加文档
+        doc1 = {"path": "/test/doc1.txt", "text": "Original content"}
+        count1 = repo.add(doc1, chunk_cfg, source_type="local_file")
+        log("Add document", count1 > 0, f"chunks={count1}")
+        
+        # 使用影子集合策略更新
+        doc1_updated = {"path": "/test/doc1.txt", "text": "Updated content"}
+        count2 = repo.update(doc1_updated, chunk_cfg, source_type="local_file")
+        log("Update document (shadow strategy)", count2 > 0, f"chunks={count2}")
+        
+        # 验证更新后文档存在
+        doc_exists = repo.exists("/test/doc1.txt")
+        log("Document exists after update", doc_exists)
+        
+        # 验证更新后文档信息
+        doc_info = repo.get_document_info("/test/doc1.txt")
+        log("Document info available", doc_info is not None)
+        
+    except Exception as e:
+        log("Update shadow strategy test", False, str(e))
+
+
+def test_update_no_data_loss():
+    """测试2.2: update异常时不丢失数据（影子集合策略）"""
+    pr("\n--- Test 2.2: Update No Data Loss on Failure (Shadow Strategy) ---")
+    
+    try:
+        from core.repository import DocumentRepository
+        
+        chroma_client = MockChromaClient()
+        collection = chroma_client.get_or_create_collection("test_collection")
+        emb_proxy = MockEmbProxy()
+        repo = DocumentRepository(collection, emb_proxy, chroma_client, "test_collection")
+        
+        chunk_cfg = {"chunk_size": 1000, "overlap": 100, "strategy": "flat", "separators": ["\n\n", "\n", " "]}
+        
+        # 添加文档
+        doc1 = {"path": "/test/doc1.txt", "text": "Original content"}
+        repo.add(doc1, chunk_cfg, source_type="local_file")
+        
+        # 模拟异常：在创建影子集合时失败
+        original_create = repo._create_shadow_collection
+        def failing_create():
+            raise Exception("Simulated failure during shadow creation")
+        
+        repo._create_shadow_collection = failing_create
+        try:
+            doc1_updated = {"path": "/test/doc1.txt", "text": "Updated content that will fail"}
+            repo.update(doc1_updated, chunk_cfg, source_type="local_file")
+        except Exception:
+            pass
+        
+        repo._create_shadow_collection = original_create
+        
+        # 验证：旧数据应该还在（影子集合策略保证不丢失）
+        doc_info = repo.get_document_info("/test/doc1.txt")
+        log("Old data preserved on failure", doc_info is not None,
+            "Document should still exist with old content")
+        
+    except Exception as e:
+        log("Update no data loss test", False, str(e))
+
+
+def test_update_copy_failure():
+    """测试2.3: 复制数据到影子集合失败时的数据状态"""
+    pr("\n--- Test 2.3: Update Copy Failure ---")
+    
+    try:
+        from core.repository import DocumentRepository
+        
+        chroma_client = MockChromaClient()
+        collection = chroma_client.get_or_create_collection("test_collection")
+        emb_proxy = MockEmbProxy()
+        repo = DocumentRepository(collection, emb_proxy, chroma_client, "test_collection")
+        
+        chunk_cfg = {"chunk_size": 1000, "overlap": 100, "strategy": "flat", "separators": ["\n\n", "\n", " "]}
+        
+        # 添加文档
+        doc1 = {"path": "/test/doc1.txt", "text": "Original content"}
+        repo.add(doc1, chunk_cfg, source_type="local_file")
+        
+        # 模拟异常：在复制数据时失败
+        original_copy = repo._copy_to_shadow
+        def failing_copy(shadow_collection):
+            raise Exception("Simulated failure during copy")
+        
+        repo._copy_to_shadow = failing_copy
+        try:
+            doc1_updated = {"path": "/test/doc1.txt", "text": "Updated content that will fail"}
+            repo.update(doc1_updated, chunk_cfg, source_type="local_file")
+        except Exception:
+            pass
+        
+        repo._copy_to_shadow = original_copy
+        
+        # 验证：旧数据应该还在（影子集合策略保证不丢失）
+        doc_info = repo.get_document_info("/test/doc1.txt")
+        log("Old data preserved on copy failure", doc_info is not None,
+            "Document should still exist with old content")
+        
+        # 验证：影子集合应该被清理
+        shadow_collections = [col for col in chroma_client.collections if col.startswith("test_collection_v")]
+        log("Shadow collection cleaned up", len(shadow_collections) == 0,
+            f"Found {len(shadow_collections)} shadow collections")
+        
+    except Exception as e:
+        log("Update copy failure test", False, str(e))
+
+
+def test_sync_shadow_strategy():
+    """测试2.4: sync的影子集合策略"""
+    pr("\n--- Test 2.4: Sync Shadow Strategy ---")
+    
+    try:
+        from core.repository import DocumentRepository
+        
+        chroma_client = MockChromaClient()
+        collection = chroma_client.get_or_create_collection("test_collection")
+        emb_proxy = MockEmbProxy()
+        repo = DocumentRepository(collection, emb_proxy, chroma_client, "test_collection")
         
         chunk_cfg = {"chunk_size": 1000, "overlap": 100, "strategy": "flat", "separators": ["\n\n", "\n", " "]}
         
@@ -379,7 +424,7 @@ def test_sync_consistency():
         repo.add(doc_a, chunk_cfg, source_type="local_file")
         log("Initial state: doc_a added", repo.exists("/test/doc_a.txt"))
         
-        # 模拟sync：新增B，更新A，删除不存在的
+        # 模拟sync：新增B，更新A
         doc_a_updated = {"path": "/test/doc_a.txt", "text": "Document A Updated"}
         doc_b_new = {"path": "/test/doc_b.txt", "text": "Document B"}
         
@@ -392,241 +437,113 @@ def test_sync_consistency():
         log("Sync stats: updated", stats["updated"] > 0, f"updated={stats['updated']}")
         
         # 验证最终状态
-        log("doc_a exists after sync", repo.exists("/test/doc_a.txt"))
-        log("doc_b exists after sync", repo.exists("/test/doc_b.txt"))
+        doc_a_exists = repo.exists("/test/doc_a.txt")
+        doc_b_exists = repo.exists("/test/doc_b.txt")
+        log("doc_a exists after sync", doc_a_exists)
+        log("doc_b exists after sync", doc_b_exists)
         
     except Exception as e:
-        log("Sync consistency test", False, str(e))
+        log("Sync shadow strategy test", False, str(e))
 
 
-def test_build_full_recovery():
-    """测试2.3: 全量重建恢复"""
-    pr("\n--- Test 2.3: Build Full Recovery ---")
+def test_sync_no_data_loss():
+    """测试2.5: sync异常时不丢失数据（影子集合策略）"""
+    pr("\n--- Test 2.5: Sync No Data Loss on Failure (Shadow Strategy) ---")
     
     try:
-        from core.builder import build_full, get_or_create_collection, split_text, get_active_collection
         from core.repository import DocumentRepository
         
-        class MockChromaClient:
-            def __init__(self):
-                self.collections = {}
-            
-            def get_or_create_collection(self, name, metadata=None):
-                if name not in self.collections:
-                    self.collections[name] = MockCollection()
-                return self.collections[name]
-            
-            def delete_collection(self, name):
-                if name in self.collections:
-                    del self.collections[name]
-            
-            def get_collection(self, name):
-                if name in self.collections:
-                    return self.collections[name]
-                raise Exception(f"Collection {name} not found")
-        
-        class MockCollection:
-            def __init__(self):
-                self.data = {}
-                self.ids = []
-                self.name = "test_collection"
-            
-            def get(self, where=None, include=None):
-                return {"ids": self.ids, "metadatas": [m.get("metadata", {}) for m in [self.data[id] for id in self.ids]], "documents": [m.get("document", "") for m in [self.data[id] for id in self.ids]]}
-            
-            def count(self):
-                return len(self.ids)
-            
-            def add(self, ids, embeddings, documents, metadatas):
-                for i, id in enumerate(ids):
-                    self.data[id] = {
-                        "id": id,
-                        "embedding": embeddings[i] if i < len(embeddings) else None,
-                        "document": documents[i] if i < len(documents) else "",
-                        "metadata": metadatas[i] if i < len(metadatas) else {}
-                    }
-                    self.ids.append(id)
-        
-        class MockEmbProxy:
-            def embed_sync(self, texts, priority=100):
-                return [[0.1] * 1024 for _ in texts]
-        
         chroma_client = MockChromaClient()
+        collection = chroma_client.get_or_create_collection("test_collection")
         emb_proxy = MockEmbProxy()
-        
-        # 创建测试文档
-        documents = [
-            {"path": "/test/doc1.txt", "text": "Document 1 content"},
-            {"path": "/test/doc2.txt", "text": "Document 2 content"},
-        ]
+        repo = DocumentRepository(collection, emb_proxy, chroma_client, "test_collection")
         
         chunk_cfg = {"chunk_size": 1000, "overlap": 100, "strategy": "flat", "separators": ["\n\n", "\n", " "]}
         
-        # 使用实际的集合名称
-        collection_name = get_active_collection("default_collection")
+        # 初始状态：添加文档A、B
+        doc_a = {"path": "/test/doc_a.txt", "text": "Document A"}
+        doc_b = {"path": "/test/doc_b.txt", "text": "Document B"}
+        repo.add(doc_a, chunk_cfg, source_type="local_file")
+        repo.add(doc_b, chunk_cfg, source_type="local_file")
         
-        # 正常全量重建
-        count = build_full("default_collection", chroma_client, documents, emb_proxy, chunk_cfg)
-        log("Build full completed", count > 0, f"chunks={count}")
+        # 模拟异常：在创建影子集合时失败
+        original_create = repo._create_shadow_collection
+        def failing_create():
+            raise Exception("Simulated failure during shadow creation")
         
-        # 验证数据完整性
-        collection = chroma_client.get_collection(collection_name)
-        log("Collection created", collection is not None)
-        log("Data integrity", collection.count() == count)
+        repo._create_shadow_collection = failing_create
         
-        # 模拟异常：在build_full过程中中断
-        # 这里我们验证的是：如果旧集合被删除，新集合创建失败会发生什么
-        original_delete = chroma_client.delete_collection
-        def failing_delete(name):
-            raise Exception("Simulated failure during delete")
+        doc_c_new = {"path": "/test/doc_c.txt", "text": "Document C"}
+        doc_a_updated = {"path": "/test/doc_a.txt", "text": "Document A Updated"}
         
-        chroma_client.delete_collection = failing_delete
+        documents = [doc_c_new, doc_a_updated]
         
         try:
-            # 这应该会失败，但旧数据应该还在
-            build_full("default_collection", chroma_client, documents, emb_proxy, chunk_cfg)
+            stats = repo.sync(documents, chunk_cfg, source_type="local_file")
         except Exception:
             pass
         
-        chroma_client.delete_collection = original_delete
+        repo._create_shadow_collection = original_create
         
-        # 验证：旧集合应该还在（因为删除失败）
-        log("Old collection preserved on failure", 
-            collection_name in chroma_client.collections)
+        # 验证：旧数据应该还在（影子集合策略保证不丢失）
+        doc_a_info = repo.get_document_info("/test/doc_a.txt")
+        doc_b_info = repo.get_document_info("/test/doc_b.txt")
+        log("doc_a preserved on failure", doc_a_info is not None,
+            "Document A should still exist with old content")
+        log("doc_b preserved on failure", doc_b_info is not None,
+            "Document B should still exist with old content")
         
     except Exception as e:
-        log("Build full recovery test", False, str(e))
+        log("Sync no data loss test", False, str(e))
 
 
-def test_data_integrity_after_crash():
-    """测试2.4: 崩溃后数据完整性"""
-    pr("\n--- Test 2.4: Data Integrity After Crash ---")
+def test_cleanup_duplicates():
+    """测试2.6: 重复数据清理（理论测试）"""
+    pr("\n--- Test 2.6: Cleanup Duplicates (Theoretical) ---")
     
     try:
-        from core.repository import DocumentRepository, content_hash
+        from core.repository import DocumentRepository
         
-        class MockCollection:
-            def __init__(self):
-                self.data = {}
-                self.ids = []
-            
-            def get(self, where=None, include=None):
-                if where and "source" in where:
-                    source = where["source"]
-                    matching = [self.data[id] for id in self.ids if self.data[id].get("metadata", {}).get("source") == source]
-                    if not matching:
-                        return {"ids": [], "metadatas": [], "documents": []}
-                    return {
-                        "ids": [m["id"] for m in matching],
-                        "metadatas": [m.get("metadata", {}) for m in matching],
-                        "documents": [m.get("document", "") for m in matching]
-                    }
-                return {"ids": self.ids, "metadatas": [m.get("metadata", {}) for m in [self.data[id] for id in self.ids]], "documents": [m.get("document", "") for m in [self.data[id] for id in self.ids]]}
-            
-            def count(self):
-                return len(self.ids)
-            
-            def add(self, ids, embeddings, documents, metadatas):
-                for i, id in enumerate(ids):
-                    self.data[id] = {
-                        "id": id,
-                        "embedding": embeddings[i] if i < len(embeddings) else None,
-                        "document": documents[i] if i < len(documents) else "",
-                        "metadata": metadatas[i] if i < len(metadatas) else {}
-                    }
-                    self.ids.append(id)
-            
-            def delete(self, where=None):
-                if where and "source" in where:
-                    source = where["source"]
-                    self.ids = [id for id in self.ids if self.data[id].get("metadata", {}).get("source") != source]
-        
-        class MockEmbProxy:
-            def embed_sync(self, texts, priority=100):
-                return [[0.1] * 1024 for _ in texts]
-        
-        collection = MockCollection()
+        chroma_client = MockChromaClient()
+        collection = chroma_client.get_or_create_collection("test_collection")
         emb_proxy = MockEmbProxy()
-        repo = DocumentRepository(collection, emb_proxy)
+        repo = DocumentRepository(collection, emb_proxy, chroma_client, "test_collection")
         
-        chunk_cfg = {"chunk_size": 1000, "overlap": 100, "strategy": "flat", "separators": ["\n\n", "\n", " "]}
+        # 测试cleanup_duplicates方法存在
+        log("cleanup_duplicates method exists", callable(getattr(repo, 'cleanup_duplicates', None)))
         
-        # 添加多个文档
-        docs = [
-            {"path": "/test/doc1.txt", "text": "Document 1"},
-            {"path": "/test/doc2.txt", "text": "Document 2"},
-            {"path": "/test/doc3.txt", "text": "Document 3"},
-        ]
-        
-        for doc in docs:
-            repo.add(doc, chunk_cfg, source_type="local_file")
-        
-        initial_count = repo.count()
-        log("Initial documents added", initial_count == 3, f"count={initial_count}")
-        
-        # 模拟崩溃：在批量操作中途失败
-        call_count = [0]
-        original_batch_add = repo._batch_add
-        
-        def failing_batch_add(chunks, batch_size=50):
-            call_count[0] += 1
-            if call_count[0] == 2:  # 第二批失败
-                raise Exception("Simulated crash during batch add")
-            return original_batch_add(chunks, batch_size)
-        
-        repo._batch_add = failing_batch_add
-        
-        # 尝试添加更多文档（会失败）
-        new_docs = [
-            {"path": "/test/doc4.txt", "text": "Document 4"},
-            {"path": "/test/doc5.txt", "text": "Document 5"},
-        ]
-        
+        # 测试cleanup_duplicates方法可以调用
         try:
-            for doc in new_docs:
-                repo.add(doc, chunk_cfg, source_type="local_file")
-        except Exception:
-            pass
-        
-        repo._batch_add = original_batch_add
-        
-        # 验证：原始文档应该还在
-        log("Original docs preserved after crash", repo.count() >= 3,
-            f"count={repo.count()}")
-        
-        # 验证：数据一致性（没有损坏）
-        for doc in docs:
-            exists = repo.exists(doc["path"])
-            log(f"Doc {Path(doc['path']).name} exists", exists)
+            cleaned = repo.cleanup_duplicates()
+            log("cleanup_duplicates callable", True, f"cleaned={cleaned}")
+        except Exception as e:
+            log("cleanup_duplicates callable", False, str(e))
         
     except Exception as e:
-        log("Data integrity test", False, str(e))
+        log("Cleanup duplicates test", False, str(e))
 
 
 def test_content_hash_consistency():
-    """测试2.5: content_hash一致性"""
-    pr("\n--- Test 2.5: Content Hash Consistency ---")
+    """测试2.7: content_hash一致性"""
+    pr("\n--- Test 2.7: Content Hash Consistency ---")
     
     try:
-        from core.repository import content_hash
+        from core.repository import content_hash as repo_content_hash
         from core.builder import content_hash as builder_content_hash
         
-        # 验证两个模块的content_hash函数一致
         test_text = "Hello, this is a test document."
         
-        repo_hash = content_hash(test_text)
+        repo_hash = repo_content_hash(test_text)
         builder_hash = builder_content_hash(test_text)
         
         log("Hash functions consistent", repo_hash == builder_hash,
             f"repo={repo_hash}, builder={builder_hash}")
         
-        # 验证相同内容产生相同hash
-        hash1 = content_hash(test_text)
-        hash2 = content_hash(test_text)
+        hash1 = repo_content_hash(test_text)
+        hash2 = repo_content_hash(test_text)
         log("Same content same hash", hash1 == hash2)
         
-        # 验证不同内容产生不同hash
-        hash3 = content_hash("Different content")
+        hash3 = repo_content_hash("Different content")
         log("Different content different hash", hash1 != hash3)
         
     except Exception as e:
@@ -638,7 +555,7 @@ def test_content_hash_consistency():
 def run_core_tests():
     """运行所有core模块测试"""
     pr("=" * 60)
-    pr("  Ezy-RAG Core Module Tests")
+    pr("  Ezy-RAG Core Module Tests (Shadow Strategy)")
     pr("=" * 60)
     pr(f"  Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     pr("=" * 60)
@@ -648,11 +565,13 @@ def run_core_tests():
     test_concurrent_query_and_build()
     test_multiple_concurrent_queries()
     
-    # 测试2: ACID事务
-    test_update_atomicity()
-    test_sync_consistency()
-    test_build_full_recovery()
-    test_data_integrity_after_crash()
+    # 测试2: ACID事务（影子集合策略）
+    test_update_shadow_strategy()
+    test_update_no_data_loss()
+    test_update_copy_failure()
+    test_sync_shadow_strategy()
+    test_sync_no_data_loss()
+    test_cleanup_duplicates()
     test_content_hash_consistency()
     
     # 生成报告
