@@ -71,7 +71,13 @@ class EmbedderProxy:
                 for item in resp.data:
                     vec = item.embedding
                     if len(vec) != self._dim:
-                        raise ValueError(f"Embedding 服务返回向量维度 {len(vec)}，期望 {self._dim}")
+                        raise ValueError(
+                            f"Embedding 维度不匹配！\n"
+                            f"   服务返回: {len(vec)} 维\n"
+                            f"   配置期望: {self._dim} 维\n"
+                            f"   修复方法: 修改 config/.env 中的 EMBEDDING_CLOUD_DIM={len(vec)}，"
+                            f"然后运行 python ezyrag.py build --full 重建知识库"
+                        )
                     vectors.append(vec)
                 with self._results_lock:
                     self._results[task_id] = vectors

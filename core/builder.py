@@ -334,6 +334,41 @@ def chunk_documents(documents: List[dict], chunk_cfg: dict) -> List[dict]:
 
 
 
+def build_full(collection_key: str, chroma_client, documents, emb_proxy, chunk_cfg: dict):
+    """
+    全量重建 — 删除旧集合，重新创建并添加所有文档
+    """
+    collection_name = get_active_collection(collection_key)
+
+    # Step 1: 删除旧集合
+    try:
+        chroma_client.delete_collection(collection_name)
+        print(f"  已删除旧集合: {collection_name}")
+    except Exception:
+        pass
+
+    # Step 2: 创建新集合
+    collection = chroma_client.get_or_create_collection(
+        name=collection_name,
+        metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100},
+    )
+    from core.repository import DocumentRepository
+    repo = DocumentRepository(collection, emb_proxy)
+
+    print(f"  新集合: {collection.name}")
+
+    # Step 3: 添加所有文档
+    stats = {"added": 0}
+    for i, doc in enumerate(documents, 1):
+        count = repo.add(doc, chunk_cfg, source_type="local_file")
+        stats["added"] += count
+        rel = Path(doc["path"]).name
+        print(f"  [{i}/{len(documents)}] {rel} ({count} chunks)")
+
+    print(f"\n  全量重建完成! 共添加 {stats['added']} chunks")
+    return repo.count()
+
+
 def build_incremental(collection_key: str, chroma_client, documents, emb_proxy, chunk_cfg: dict):
     """
     增量更新 — 通过 Repository 实现文档级 CRUD
@@ -386,8 +421,22 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
     docs_dir = ROOT / DOCS_DIR
 
     mode = "全量重建" if full_rebuild else "增量更新"
+    
+    # 读取 Embedding 配置
+    embedding_mode = os.getenv("EMBEDDING_MODE", "cloud").lower()
+    if embedding_mode == "local":
+        embedding_url = os.getenv("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings")
+        embedding_model = os.getenv("EMBEDDING_LOCAL_MODEL", "text-embedding-qwen3-embedding-4b")
+        embedding_dim = os.getenv("EMBEDDING_LOCAL_DIM", "2560")
+    else:
+        embedding_url = os.getenv("EMBEDDING_CLOUD_URL", "https://api.siliconflow.cn/v1/embeddings")
+        embedding_model = os.getenv("EMBEDDING_CLOUD_MODEL", "BAAI/bge-m3")
+        embedding_dim = os.getenv("EMBEDDING_CLOUD_DIM", "1024")
+    
     print("=" * 60)
-    print(f"  Ezy-RAG V0.0.14 — 知识库构建 ({mode})")
+    print(f"  Ezy-RAG V0.0.17 — 知识库构建 ({mode})")
+    print("=" * 60)
+    print(f"  Embedding: {'本地' if embedding_mode == 'local' else '云端'} ({embedding_model}, {embedding_dim}维)")
     print(f"  切块模板: {chunk_cfg['name']} ({chunk_cfg['strategy']}, {chunk_cfg['chunk_size']}字)")
     print("=" * 60)
 
@@ -418,7 +467,7 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
     print("\n[2/5] 初始化 Embedding 代理...")
     try:
         emb_proxy = get_lm_proxy()
-        print(f"  代理就绪 (模型: {emb_proxy._model})")
+        print(f"  代理就绪")
     except Exception as e:
         print(f"  无法连接 Embedding 服务: {e}")
         return

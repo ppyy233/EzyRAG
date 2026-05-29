@@ -51,7 +51,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Ezy-RAG-MCP")
 
-app = FastAPI(title="Ezy-RAG MCP Server", version="0.0.14")
+app = FastAPI(title="Ezy-RAG MCP Server", version="0.0.17")
 
 _oai_client = None
 _chroma_client = None
@@ -148,8 +148,11 @@ async def embed_query_async(query: str) -> list[float]:
     return vectors[0]
 
 
-async def rerank_async(query: str, documents: list[str]) -> list[float]:
-    """调用重排 API，返回分数列表"""
+async def rerank_async(query: str, documents: list[str]) -> tuple[list[float], list[int]]:
+    """调用重排 API，返回 (scores, indices)
+    - scores: 分数列表
+    - indices: 对应的原始索引列表
+    """
     mode = os.getenv("RERANK_MODE", "local").lower()
 
     if mode == "cloud":
@@ -160,76 +163,81 @@ async def rerank_async(query: str, documents: list[str]) -> list[float]:
         return await _rerank_local(query, documents)
 
 
-async def _rerank_local(query: str, documents: list[str]) -> list[float]:
-    """本地 Rerank 服务"""
+async def _rerank_local(query: str, documents: list[str]) -> tuple[list[float], list[int]]:
+    """本地 Rerank 服务
+    返回: (scores, indices) - 分数和对应的原始索引
+    """
     url = os.getenv("RERANK_LOCAL_URL", "http://127.0.0.1:5001").rstrip("/") + "/rerank"
     headers = {"Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, json={"query": query, "documents": documents}, headers=headers)
         r.raise_for_status()
-        return r.json()["scores"]
+        all_scores = r.json()["scores"]
+        
+        # 按分数排序，取 top-k
+        indexed_scores = list(enumerate(all_scores))
+        indexed_scores.sort(key=lambda x: x[1], reverse=True)
+        
+        top_k = indexed_scores[:RETRIEVAL_K]
+        indices = [i for i, _ in top_k]
+        scores = [s for _, s in top_k]
+        
+        logger.info(f"本地 Rerank 返回 {len(scores)} 个结果，top-k={RETRIEVAL_K}")
+        return scores, indices
 
 
-async def _rerank_cloud(query: str, documents: list[str]) -> list[float]:
-    """云端 Rerank API（根据 URL 自动适配格式）"""
+async def _rerank_cloud(query: str, documents: list[str]) -> tuple[list[float], list[int]]:
+    """云端 Rerank API（根据 URL 自动适配格式）
+    返回: (scores, indices) - 分数和对应的原始索引
+    """
     url = os.getenv("RERANK_CLOUD_URL", "https://api.cohere.com/v1/rerank").rstrip("/")
     api_key = os.getenv("RERANK_CLOUD_API_KEY", "")
     model = os.getenv("RERANK_CLOUD_MODEL", "rerank-multilingual-v3.0")
 
+    payload = {
+        "model": model,
+        "query": query,
+        "documents": documents,
+        "top_n": RETRIEVAL_K,
+        "return_documents": False,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    
     # 根据 URL 判断格式
     if "cohere.com" in url:
-        # Cohere 格式
-        payload = {
-            "query": query,
-            "documents": documents,
-            "model": model,
-            "top_n": len(documents),
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(url, json=payload, headers=headers)
-            r.raise_for_status()
-            data = r.json()
-            scores = [0.0] * len(documents)
-            for item in data["results"]:
-                scores[item["index"]] = item["relevance_score"]
-            return scores
-
-    elif "jina.ai" in url:
-        # Jina 格式
-        payload = {
-            "query": query,
-            "documents": documents,
-            "model": model,
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(url, json=payload, headers=headers)
-            r.raise_for_status()
-            data = r.json()
-            scores = [0.0] * len(documents)
-            for item in data["results"]:
-                scores[item["index"]] = item["relevance_score"]
-            return scores
-
-    else:
-        # 通用格式（兼容本地格式）
-        if not url.endswith("/rerank"):
-            url = url + "/rerank"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(url, json={"query": query, "documents": documents}, headers=headers)
-            r.raise_for_status()
-            return r.json()["scores"]
+        # Cohere 格式：不传 return_documents
+        payload.pop("return_documents", None)
+    
+    if not url.endswith("/rerank"):
+        url = url + "/rerank"
+    
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, json=payload, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+        
+        # 标准格式：Cohere/Jina/SiliconFlow
+        if "results" in data:
+            # API 返回的结果已经按 relevance_score 排序
+            scores = [item["relevance_score"] for item in data["results"]]
+            indices = [item["index"] for item in data["results"]]
+            logger.info(f"云端 Rerank 返回 {len(scores)} 个结果，top_n={RETRIEVAL_K}")
+            return scores, indices
+        # 非标准格式
+        elif "scores" in data:
+            all_scores = data["scores"]
+            # 按分数排序，取 top-k
+            indexed_scores = list(enumerate(all_scores))
+            indexed_scores.sort(key=lambda x: x[1], reverse=True)
+            top_k = indexed_scores[:RETRIEVAL_K]
+            indices = [i for i, _ in top_k]
+            scores = [s for _, s in top_k]
+            return scores, indices
+        else:
+            raise ValueError(f"未知的 rerank 响应格式: {list(data.keys())}")
 
 
 async def search_async(query: str) -> str:
@@ -258,26 +266,45 @@ async def search_async(query: str) -> str:
         metas = results["metadatas"][0]
         dists = results["distances"][0]
 
-        if do_rerank and len(docs) > RETRIEVAL_K:
+        # 重排状态跟踪
+        rerank_executed = False
+        rerank_scores = []
+
+        if do_rerank and len(docs) > 1:
             try:
-                scores = await rerank_async(query, docs)
-                ranked = sorted(zip(range(len(docs)), scores), key=lambda x: x[1], reverse=True)
-                top_indices = [i for i, _ in ranked[:RETRIEVAL_K]]
-                ids = [ids[i] for i in top_indices]
-                docs = [docs[i] for i in top_indices]
-                metas = [metas[i] for i in top_indices]
-                dists = [dists[i] for i in top_indices]
-                logger.info(f"重排完成，取 top-{RETRIEVAL_K}")
+                scores, indices = await rerank_async(query, docs)
+                rerank_executed = True
+                rerank_scores = scores
+                
+                # 使用 indices 重新排列文档
+                ids = [ids[i] for i in indices]
+                docs = [docs[i] for i in indices]
+                metas = [metas[i] for i in indices]
+                dists = [dists[i] for i in indices]
+                
+                logger.info(f"重排完成，返回 {len(scores)} 条，分数: {rerank_scores}")
             except Exception as e:
-                logger.warning(f"重排失败，使用原始结果: {e}")
+                logger.warning(f"重排失败: {e}")
+                # 重排失败时，取前 RETRIEVAL_K 个
                 docs = docs[:RETRIEVAL_K]
                 metas = metas[:RETRIEVAL_K]
                 dists = dists[:RETRIEVAL_K]
                 ids = ids[:RETRIEVAL_K]
+        else:
+            # 不重排时，取前 RETRIEVAL_K 个
+            docs = docs[:RETRIEVAL_K]
+            metas = metas[:RETRIEVAL_K]
+            dists = dists[:RETRIEVAL_K]
+            ids = ids[:RETRIEVAL_K]
 
-        parts = [f"找到 {len(docs)} 条相关文档:\n"]
-        if do_rerank:
-            parts = [f"找到 {len(docs)} 条相关文档（已通过重排优化）:\n"]
+        # 显示搜索结果
+        if rerank_executed:
+            score_str = ", ".join([f"{s:.2f}" for s in rerank_scores])
+            parts = [f"找到 {len(docs)} 条相关文档（✓ 已重排 | 分数: {score_str}）:\n"]
+        elif do_rerank:
+            parts = [f"找到 {len(docs)} 条相关文档（⚠ 重排跳过，文档数不足）:\n"]
+        else:
+            parts = [f"找到 {len(docs)} 条相关文档:\n"]
         for i, (doc_id, doc_text, meta, dist) in enumerate(zip(
             ids, docs, metas, dists
         ), 1):
@@ -382,7 +409,7 @@ async def mcp_endpoint(request: Request):
             "id": req_id,
             "result": {
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "Ezy-RAG", "version": "0.0.14"},
+                "serverInfo": {"name": "Ezy-RAG", "version": "0.0.17"},
                 "capabilities": {"tools": {}}
             }
         })
@@ -399,10 +426,32 @@ async def mcp_endpoint(request: Request):
 
 
 def main():
-    logger.info("Ezy-RAG MCP Server V0.0.14 启动中...")
-    logger.info(f"Embedding 服务: {os.getenv('EMBEDDING_API_URL', 'http://127.0.0.1:5000/v1/embeddings')}")
-    logger.info(f"ChromaDB Server: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
+    # 读取配置
+    embedding_mode = os.getenv("EMBEDDING_MODE", "cloud").lower()
+    if embedding_mode == "local":
+        embedding_model = os.getenv("EMBEDDING_LOCAL_MODEL", "text-embedding-qwen3-embedding-4b")
+        embedding_dim = os.getenv("EMBEDDING_LOCAL_DIM", "2560")
+    else:
+        embedding_model = os.getenv("EMBEDDING_CLOUD_MODEL", "BAAI/bge-m3")
+        embedding_dim = os.getenv("EMBEDDING_CLOUD_DIM", "1024")
+    
+    rerank_enabled = os.getenv("RERANK_ENABLED", "false").lower() == "true"
+    rerank_mode = os.getenv("RERANK_MODE", "local").lower()
+    if rerank_enabled:
+        if rerank_mode == "local":
+            rerank_model = "本地模型"
+        else:
+            rerank_model = os.getenv("RERANK_CLOUD_MODEL", "rerank-multilingual-v3.0")
+    else:
+        rerank_model = "未启用"
+    
+    logger.info("=" * 50)
+    logger.info("Ezy-RAG MCP Server V0.0.17 启动中...")
+    logger.info(f"Embedding: {'本地' if embedding_mode == 'local' else '云端'} ({embedding_model}, {embedding_dim}维)")
+    logger.info(f"Rerank: {'未启用' if not rerank_enabled else ('本地' if rerank_mode == 'local' else '云端')} ({rerank_model})")
+    logger.info(f"ChromaDB: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
     logger.info(f"监听: http://{os.getenv('MCP_SERVER_HOST', '127.0.0.1')}:{os.getenv('MCP_SERVER_PORT', '9766')}")
+    logger.info("=" * 50)
 
     async def startup_checks():
         ok, err = await check_lm_studio_health()
