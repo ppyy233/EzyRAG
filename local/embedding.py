@@ -74,7 +74,7 @@ def load_model(model_name: str = None):
     logger.info(f"加载 Embedding 模型: {model_name}")
     from sentence_transformers import SentenceTransformer
     device = detect_device()
-    _model = SentenceTransformer(model_name, device=device)
+    _model = SentenceTransformer(model_name, device=device, trust_remote_code=True)
     _model_name = model_name
     
     # 获取模型维度

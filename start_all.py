@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.17 �?服务管理脚本
+Ezy-RAG V0.0.17 - 服务管理脚本
 用法: python start_all.py
 """
 import subprocess
@@ -19,12 +19,12 @@ load_dotenv(ROOT / "config" / ".env")
 
 PROCESSES = {}
 
-# 我们自己服务的端�?OUR_PORTS = {
+OUR_PORTS = {
     "ChromaDB": int(os.getenv("CHROMA_SERVER_PORT", "9898")),
     "MCP": int(os.getenv("MCP_SERVER_PORT", "9766")),
 }
 
-# 各服务的超时时间（Rerank 需要加载模型，时间更长�?SERVICE_TIMEOUT = {
+SERVICE_TIMEOUT = {
     "ChromaDB": 15,
     "MCP": 15,
     "Rerank": 45
@@ -32,7 +32,7 @@ PROCESSES = {}
 
 
 def check_service(host: str, port: int) -> bool:
-    """检查服务是否运�?""
+    """检查服务是否运行"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
@@ -67,23 +67,21 @@ def start_service(name: str, module: str, host: str, port: int, timeout: int = N
 
     cleanup_zombie_processes()
 
-    # 1. 优先检查端口是否已监听
     if check_service(host, port):
-        print(f"�?{name} 已经在运行（端口 {port} 已监听）")
+        print(f"[OK] {name} 已经在运行（端口 {port} 已监听）")
         return True
 
-    # 2. 检查是否有残留进程（端口没监听，但进程在）
     if name in PROCESSES and PROCESSES[name].poll() is None:
         pid = PROCESSES[name].pid
-        print(f"  {name} 进程存在 (PID: {pid})，等待端口监�?..")
+        print(f"  {name} 进程存在 (PID: {pid})，等待端口监听...")
         if wait_for_service(host, port, timeout):
-            print(f"�?{name} 已启�?(PID: {pid}, 端口: {port})")
+            print(f"[OK] {name} 已启动 (PID: {pid}, 端口: {port})")
             return True
         else:
-            print(f"�?{name} 启动超时 ({timeout}s)")
+            print(f"[FAIL] {name} 启动超时 ({timeout}s)")
             return False
 
-    # 3. 启动新进�?    print(f"启动 {name}...")
+    print(f"启动 {name}...")
     try:
         process = subprocess.Popen(
             [sys.executable, "-m", module],
@@ -93,95 +91,83 @@ def start_service(name: str, module: str, host: str, port: int, timeout: int = N
         PROCESSES[name] = process
 
         if wait_for_service(host, port, timeout):
-            print(f"�?{name} 已启�?(PID: {process.pid}, 端口: {port})")
+            print(f"[OK] {name} 已启动 (PID: {process.pid}, 端口: {port})")
             return True
         else:
-            print(f"�?{name} 启动超时 ({timeout}s)")
+            print(f"[FAIL] {name} 启动超时 ({timeout}s)")
             return False
     except Exception as e:
-        print(f"�?{name} 启动失败: {e}")
+        print(f"[FAIL] {name} 启动失败: {e}")
         return False
 
 
 def stop_service(name: str) -> bool:
     """停止服务"""
-    # 1. 先尝试从 PROCESSES 字典中停�?    if name in PROCESSES and PROCESSES[name].poll() is None:
+    if name in PROCESSES and PROCESSES[name].poll() is None:
         pid = PROCESSES[name].pid
-        
         try:
             print(f"停止 {name} (PID: {pid})...")
-            
             if sys.platform == 'win32':
-                # Windows: 使用 taskkill 终止进程�?                result = subprocess.run(
+                result = subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(pid)],
                     capture_output=True, check=False
                 )
                 if result.returncode == 0:
-                    print(f"�?{name} 已停�?)
+                    print(f"[OK] {name} 已停止")
                 else:
-                    print(f"�?{name} 已停�?(进程可能已退�?")
+                    print(f"[OK] {name} 已停止（进程可能已退出）")
             else:
-                # Linux/Mac: 使用 kill 终止进程�?                os.killpg(os.getpgid(pid), signal.SIGTERM)
-                print(f"�?{name} 已停�?)
-            
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+                print(f"[OK] {name} 已停止")
             del PROCESSES[name]
             return True
         except Exception as e:
-            print(f"�?{name} 停止失败: {e}")
+            print(f"[FAIL] {name} 停止失败: {e}")
             return False
-    
-    # 2. 如果 PROCESSES 中没有，通过端口查找（只查找我们自己的端口）
+
     port = OUR_PORTS.get(name)
     if port and check_service("127.0.0.1", port):
         return stop_service_by_port(name, port)
-    
-    print(f"�?{name} 未在运行")
+
+    print(f"[INFO] {name} 未在运行")
     return False
 
 
 def stop_service_by_port(name: str, port: int) -> bool:
-    """通过端口查找并终止服�?""
+    """通过端口查找并终止服务"""
     try:
         print(f"停止 {name} (端口: {port})...")
-        
         if sys.platform == 'win32':
-            # Windows: 使用 netstat 查找占用端口的进�?            result = subprocess.run(
+            result = subprocess.run(
                 ["netstat", "-ano"],
                 capture_output=True, text=True
             )
-
             for line in result.stdout.split('\n'):
                 if f":{port}" in line and "LISTENING" in line:
                     parts = line.split()
                     pid = int(parts[-1])
-
-                    # 终止进程�?                    subprocess.run(
+                    subprocess.run(
                         ["taskkill", "/F", "/T", "/PID", str(pid)],
                         capture_output=True, check=False
                     )
-
-                    print(f"�?{name} 已停�?(PID: {pid})")
+                    print(f"[OK] {name} 已停止 (PID: {pid})")
                     return True
         else:
-            # Linux/Mac: 使用 lsof 查找占用端口的进�?            result = subprocess.run(
+            result = subprocess.run(
                 ["lsof", "-i", f":{port}"],
                 capture_output=True, text=True
             )
-
             for line in result.stdout.split('\n'):
                 if "LISTEN" in line:
                     parts = line.split()
                     pid = int(parts[1])
-
-                    # 终止进程�?                    os.killpg(os.getpgid(pid), signal.SIGTERM)
-
-                    print(f"�?{name} 已停�?(PID: {pid})")
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                    print(f"[OK] {name} 已停止 (PID: {pid})")
                     return True
-
-        print(f"�?{name} 未在运行")
+        print(f"[INFO] {name} 未在运行")
         return False
     except Exception as e:
-        print(f"�?{name} 停止失败: {e}")
+        print(f"[FAIL] {name} 停止失败: {e}")
         return False
 
 
@@ -194,7 +180,7 @@ def cleanup_zombie_processes():
 
 
 def show_status():
-    """显示服务状�?""
+    """显示服务状态"""
     cleanup_zombie_processes()
 
     chroma_host = os.getenv("CHROMA_SERVER_HOST", "127.0.0.1")
@@ -206,48 +192,43 @@ def show_status():
     rerank_enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
     rerank_mode = os.getenv("RERANK_MODE", "local")
 
-    print("\n服务状态：")
+    print("\n服务状态:")
     print("-" * 70)
-    print(f"{'服务':<20} {'状�?:<10} {'PID':<10} {'端口/配置':<10}")
+    print(f"{'服务':<20} {'状态':<10} {'PID':<10} {'端口/配置':<10}")
     print("-" * 70)
 
-    # Embedding 服务
     if embedding_mode == "local":
         embedding_url = os.getenv("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings")
-        # �?URL 中提取端�?        try:
+        try:
             embedding_port = int(embedding_url.split(":")[-1].split("/")[0])
         except:
             embedding_port = 1234
-        embedding_status = "运行�? if check_service("127.0.0.1", embedding_port) else "未运�?
+        embedding_status = "运行中" if check_service("127.0.0.1", embedding_port) else "未运行"
         print(f"{'Embedding (本地)':<20} {embedding_status:<10} {'-':<10} {embedding_port:<10}")
     else:
         embedding_url = os.getenv("EMBEDDING_CLOUD_URL", "https://api.siliconflow.cn/v1/embeddings")
-        # 提取域名
         try:
             domain = embedding_url.split("//")[1].split("/")[0]
         except:
             domain = "unknown"
-        print(f"{'Embedding (云端)':<20} {'已配�?:<10} {'-':<10} {domain:<10}")
+        print(f"{'Embedding (云端)':<20} {'已配置':<10} {'-':<10} {domain:<10}")
 
-    # ChromaDB
-    chroma_status = "运行�? if check_service(chroma_host, chroma_port) else "未运�?
+    chroma_status = "运行中" if check_service(chroma_host, chroma_port) else "未运行"
     chroma_pid = PROCESSES.get("ChromaDB")
     if chroma_pid:
-        chroma_pid = str(chroma_pid.pid) if chroma_pid.poll() is None else "已退�?
+        chroma_pid = str(chroma_pid.pid) if chroma_pid.poll() is None else "已退出"
     else:
         chroma_pid = "-"
     print(f"{'ChromaDB':<20} {chroma_status:<10} {chroma_pid:<10} {chroma_port:<10}")
 
-    # MCP
-    mcp_status = "运行�? if check_service(mcp_host, mcp_port) else "未运�?
+    mcp_status = "运行中" if check_service(mcp_host, mcp_port) else "未运行"
     mcp_pid = PROCESSES.get("MCP")
     if mcp_pid:
-        mcp_pid = str(mcp_pid.pid) if mcp_pid.poll() is None else "已退�?
+        mcp_pid = str(mcp_pid.pid) if mcp_pid.poll() is None else "已退出"
     else:
         mcp_pid = "-"
     print(f"{'MCP':<20} {mcp_status:<10} {mcp_pid:<10} {mcp_port:<10}")
 
-    # Rerank
     if rerank_enabled:
         if rerank_mode == "local":
             rerank_url = os.getenv("RERANK_LOCAL_URL", "http://127.0.0.1:5001")
@@ -255,33 +236,30 @@ def show_status():
                 rerank_port = int(rerank_url.split(":")[-1].split("/")[0])
             except:
                 rerank_port = 5001
-            rerank_status = "运行�? if check_service("127.0.0.1", rerank_port) else "未运�?
+            rerank_status = "运行中" if check_service("127.0.0.1", rerank_port) else "未运行"
             rerank_pid = PROCESSES.get("Rerank")
             if rerank_pid:
-                rerank_pid = str(rerank_pid.pid) if rerank_pid.poll() is None else "已退�?
+                rerank_pid = str(rerank_pid.pid) if rerank_pid.poll() is None else "已退出"
             else:
                 rerank_pid = "-"
             print(f"{'Rerank (本地)':<20} {rerank_status:<10} {rerank_pid:<10} {rerank_port:<10}")
         else:
             rerank_url = os.getenv("RERANK_CLOUD_URL", "https://api.cohere.com/v1/rerank")
-            # 提取域名
             try:
                 domain = rerank_url.split("//")[1].split("/")[0]
             except:
                 domain = "unknown"
-            print(f"{'Rerank (云端)':<20} {'已配�?:<10} {'-':<10} {domain:<10}")
+            print(f"{'Rerank (云端)':<20} {'已配置':<10} {'-':<10} {domain:<10}")
     else:
-        print(f"{'Rerank':<20} {'未启�?:<10} {'-':<10} {'-':<10}")
+        print(f"{'Rerank':<20} {'未启用':<10} {'-':<10} {'-':<10}")
 
     print("-" * 70)
 
 
 def show_config():
     """显示当前配置"""
-    print("\n当前配置�?)
+    print("\n当前配置:")
     print("-" * 60)
-    
-    # Embedding 配置
     embedding_mode = os.getenv("EMBEDDING_MODE", "cloud")
     print(f"Embedding 模式: {embedding_mode}")
     if embedding_mode == "cloud":
@@ -290,15 +268,14 @@ def show_config():
         if api_key:
             print(f"  API Key: ****{api_key[-4:]}")
         else:
-            print(f"  API Key: 未配�?)
+            print(f"  API Key: 未配置")
         print(f"  模型: {os.getenv('EMBEDDING_CLOUD_MODEL', 'BAAI/bge-m3')}")
         print(f"  维度: {os.getenv('EMBEDDING_CLOUD_DIM', '1024')}")
     else:
         print(f"  URL: {os.getenv('EMBEDDING_LOCAL_URL', 'http://127.0.0.1:1234/v1/embeddings')}")
         print(f"  模型: {os.getenv('EMBEDDING_LOCAL_MODEL', 'text-embedding-qwen3-embedding-4b')}")
         print(f"  维度: {os.getenv('EMBEDDING_LOCAL_DIM', '2560')}")
-    
-    # Rerank 配置
+
     rerank_enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
     print(f"\nRerank 启用: {rerank_enabled}")
     if rerank_enabled:
@@ -310,27 +287,23 @@ def show_config():
             if api_key:
                 print(f"  API Key: ****{api_key[-4:]}")
             else:
-                print(f"  API Key: 未配�?)
+                print(f"  API Key: 未配置")
             print(f"  模型: {os.getenv('RERANK_CLOUD_MODEL', 'rerank-multilingual-v3.0')}")
         else:
             print(f"  URL: {os.getenv('RERANK_LOCAL_URL', 'http://127.0.0.1:5001')}")
-    
-    # 服务配置
+
     print(f"\nChromaDB: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
     print(f"MCP: {os.getenv('MCP_SERVER_HOST', '127.0.0.1')}:{os.getenv('MCP_SERVER_PORT', '9766')}")
-    
-    # 切块策略
     print(f"\n切块策略: {os.getenv('CHUNK_TEMPLATE', 'academic')}")
 
 
 def check_dependencies() -> list:
-    """检查依赖服�?""
+    """检查依赖服务"""
     errors = []
-
     chroma_host = os.getenv("CHROMA_SERVER_HOST", "127.0.0.1")
     chroma_port = int(os.getenv("CHROMA_SERVER_PORT", "9898"))
 
-    # 检�?Embedding 服务（仅本地模式�?    embedding_mode = os.getenv("EMBEDDING_MODE", "cloud")
+    embedding_mode = os.getenv("EMBEDDING_MODE", "cloud")
     if embedding_mode == "local":
         embedding_url = os.getenv("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings")
         try:
@@ -338,39 +311,38 @@ def check_dependencies() -> list:
         except:
             embedding_port = 1234
         if not check_service("127.0.0.1", embedding_port):
-            errors.append("Embedding 本地服务未运�?)
+            errors.append("Embedding 本地服务未运行")
 
-    # 检�?ChromaDB 服务
     if not check_service(chroma_host, chroma_port):
-        errors.append("ChromaDB 服务未运�?)
+        errors.append("ChromaDB 服务未运行")
 
     return errors
 
 
 def check_orphan_records():
-    """检查孤立记�?""
+    """检查孤立记录"""
     try:
         import chromadb
         from config.settings import get_collection_name
         from core.scheduler import get_scheduler
         from core.repository import DocumentRepository
-        
+
         client = chromadb.HttpClient(
             host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
             port=int(os.getenv("CHROMA_SERVER_PORT", "9898")),
         )
         client.heartbeat()
-        
+
         collection_name = get_collection_name()
         collection = client.get_collection(name=collection_name)
         emb_proxy = get_scheduler()
         repo = DocumentRepository(collection, emb_proxy)
-        
+
         docs_dir = str(ROOT / "data" / "docs")
         orphans = repo.check_orphan_records(docs_dir)
-        
+
         if orphans:
-            print(f"\n  �?检测到 {len(orphans)} 个孤立记录（本地文件已删除）")
+            print(f"\n  [!] 检测到 {len(orphans)} 个孤立记录（本地文件已删除）")
             print(f"  使用 'python db_manage.py clean' 命令清理")
             return True
         return False
@@ -379,7 +351,7 @@ def check_orphan_records():
 
 
 def main():
-    """主函�?""
+    """主函数"""
     chroma_host = os.getenv("CHROMA_SERVER_HOST", "127.0.0.1")
     chroma_port = int(os.getenv("CHROMA_SERVER_PORT", "9898"))
     mcp_host = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
@@ -388,31 +360,29 @@ def main():
     rerank_enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
     rerank_mode = os.getenv("RERANK_MODE", "local")
 
-    # 启动时检查孤立记�?    check_orphan_records()
+    check_orphan_records()
 
     while True:
         print("\n" + "=" * 60)
-        print("  Ezy-RAG V0.0.17 �?服务管理")
+        print("  Ezy-RAG V0.0.17 - 服务管理")
         print("=" * 60)
-        print("1. 查看服务状�?)
+        print("1. 查看服务状态")
         print("2. 查看当前配置")
         print("3. 启动服务")
         print("4. 停止服务")
         print("5. 重启服务")
-        print("6. 修改配置（调�?init.py�?)
-        print("7. 退�?)
+        print("6. 修改配置（调用 init.py）")
+        print("7. 退出")
 
         choice = input("\n请选择 (1-7): ").strip()
 
         if choice == "1":
             show_status()
-
         elif choice == "2":
             show_config()
-
         elif choice == "3":
-            print("\n启动服务�?)
-            print("1. 启动所有服�?)
+            print("\n启动服务:")
+            print("1. 启动所有服务")
             print("2. 启动 ChromaDB")
             print("3. 启动 MCP")
             if rerank_enabled and rerank_mode == "local":
@@ -420,9 +390,7 @@ def main():
                 print("5. 返回")
             else:
                 print("4. 返回")
-
             sub_choice = input("\n请选择: ").strip()
-
             if sub_choice == "1":
                 start_service("ChromaDB", "servers.chroma", chroma_host, chroma_port)
                 start_service("MCP", "servers.mcp", mcp_host, mcp_port)
@@ -433,20 +401,17 @@ def main():
                     except:
                         rerank_port = 5001
                     start_service("Rerank", "local.rerank", "127.0.0.1", rerank_port)
-
             elif sub_choice == "2":
                 start_service("ChromaDB", "servers.chroma", chroma_host, chroma_port)
-
             elif sub_choice == "3":
                 errors = check_dependencies()
                 if errors:
-                    print("\n启动失败�?)
+                    print("\n启动失败:")
                     for error in errors:
-                        print(f"  �?{error}")
-                    print("\n请先启动依赖服务后再试�?)
+                        print(f"  [!] {error}")
+                    print("\n请先启动依赖服务后再试。")
                 else:
                     start_service("MCP", "servers.mcp", mcp_host, mcp_port)
-
             elif sub_choice == "4" and rerank_enabled and rerank_mode == "local":
                 rerank_url = os.getenv("RERANK_LOCAL_URL", "http://127.0.0.1:5001")
                 try:
@@ -454,16 +419,13 @@ def main():
                 except:
                     rerank_port = 5001
                 start_service("Rerank", "local.rerank", "127.0.0.1", rerank_port)
-
             elif sub_choice == "4" or sub_choice == "5":
                 continue
-
             else:
                 print("无效的选择")
-
         elif choice == "4":
-            print("\n停止服务�?)
-            print("1. 停止所有服�?)
+            print("\n停止服务:")
+            print("1. 停止所有服务")
             print("2. 停止 ChromaDB")
             print("3. 停止 MCP")
             if rerank_enabled and rerank_mode == "local":
@@ -471,33 +433,25 @@ def main():
                 print("5. 返回")
             else:
                 print("4. 返回")
-
             sub_choice = input("\n请选择: ").strip()
-
             if sub_choice == "1":
                 stop_service("ChromaDB")
                 stop_service("MCP")
                 if rerank_enabled and rerank_mode == "local":
                     stop_service("Rerank")
-
             elif sub_choice == "2":
                 stop_service("ChromaDB")
-
             elif sub_choice == "3":
                 stop_service("MCP")
-
             elif sub_choice == "4" and rerank_enabled and rerank_mode == "local":
                 stop_service("Rerank")
-
             elif sub_choice == "4" or sub_choice == "5":
                 continue
-
             else:
                 print("无效的选择")
-
         elif choice == "5":
-            print("\n重启服务�?)
-            print("1. 重启所有服�?)
+            print("\n重启服务:")
+            print("1. 重启所有服务")
             print("2. 重启 ChromaDB")
             print("3. 重启 MCP")
             if rerank_enabled and rerank_mode == "local":
@@ -505,9 +459,7 @@ def main():
                 print("5. 返回")
             else:
                 print("4. 返回")
-
             sub_choice = input("\n请选择: ").strip()
-
             if sub_choice == "1":
                 stop_service("ChromaDB")
                 stop_service("MCP")
@@ -523,17 +475,14 @@ def main():
                     except:
                         rerank_port = 5001
                     start_service("Rerank", "local.rerank", "127.0.0.1", rerank_port)
-
             elif sub_choice == "2":
                 stop_service("ChromaDB")
                 time.sleep(2)
                 start_service("ChromaDB", "servers.chroma", chroma_host, chroma_port)
-
             elif sub_choice == "3":
                 stop_service("MCP")
                 time.sleep(2)
                 start_service("MCP", "servers.mcp", mcp_host, mcp_port)
-
             elif sub_choice == "4" and rerank_enabled and rerank_mode == "local":
                 stop_service("Rerank")
                 time.sleep(2)
@@ -543,28 +492,20 @@ def main():
                 except:
                     rerank_port = 5001
                 start_service("Rerank", "local.rerank", "127.0.0.1", rerank_port)
-
             elif sub_choice == "4" or sub_choice == "5":
                 continue
-
             else:
                 print("无效的选择")
-
         elif choice == "6":
-            # 调用 init.py
             subprocess.run([sys.executable, "init.py"], cwd=ROOT)
-            # 重新加载环境变量
             load_dotenv(ROOT / "config" / ".env", override=True)
-
         elif choice == "7":
-            # 停止所有服�?            for name in list(PROCESSES.keys()):
+            for name in list(PROCESSES.keys()):
                 stop_service(name)
             break
-
         else:
             print("无效的选择")
 
 
 if __name__ == "__main__":
     main()
-
