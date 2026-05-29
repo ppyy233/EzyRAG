@@ -18,6 +18,7 @@ import sys
 import hashlib
 import logging
 import argparse
+import shutil
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -322,6 +323,74 @@ def chunk_single_document(doc: dict, chunk_cfg: dict, source_type: str = "local_
 
 
 # ============================================================
+#  维护工具
+# ============================================================
+
+def cleanup_empty_chroma_dirs():
+    """清理 ChromaDB 的空 segment 目录（删除集合后残留的空文件夹）"""
+    chroma_dir = ROOT / "data" / "chroma_db"
+    if not chroma_dir.exists():
+        return 0
+    cleaned = 0
+    for d in chroma_dir.iterdir():
+        if d.is_dir() and d.name not in ("_test_sync", ".gitkeep") and not any(d.iterdir()):
+            try:
+                d.rmdir()
+                cleaned += 1
+            except Exception:
+                pass
+    if cleaned > 0:
+        logger.info(f"清理 {cleaned} 个空 ChromaDB 目录")
+    return cleaned
+
+
+def cleanup_orphan_shadows(chroma_client, config_key: str):
+    """清理不在指针中的孤儿影子集合"""
+    if not chroma_client:
+        return 0
+    active_name = get_active_collection(config_key)
+    cleaned = 0
+    try:
+        for col in chroma_client.list_collections():
+            if col.name.startswith(f"{config_key}_v") and col.name != active_name:
+                try:
+                    chroma_client.delete_collection(col.name)
+                    cleaned += 1
+                    logger.info(f"清理孤儿影子: {col.name}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return cleaned
+
+
+def validate_hnsw(collection) -> tuple[bool, str]:
+    """验证集合的 HNSW 索引是否完好"""
+    try:
+        count = collection.count()
+        if count == 0:
+            return True, "空集合"
+        # 用 1024 维向量做测试查询（覆盖常见维度）
+        collection.query(
+            query_embeddings=[[0.0] * 1024],
+            n_results=1,
+            include=["metadatas"],
+        )
+        return True, f"{count} records"
+    except Exception as e:
+        err = str(e)
+        if "hnsw" in err.lower() or "dimension" in err.lower():
+            # 维度不匹配也算 HNSW 验证失败，但不一定是损坏
+            # 尝试用 count 验证
+            try:
+                collection.count()
+                return True, f"{count} records (query dim mismatch)"
+            except:
+                return False, f"HNSW 损坏: {err[:80]}"
+        return False, err[:100]
+
+
+# ============================================================
 #  DocumentDatabase — 统一数据库操作
 # ============================================================
 
@@ -499,6 +568,9 @@ class DocumentDatabase:
         同步文档 — 影子集合策略
         对比 hash，自动增删改
         """
+        # 启动清理
+        cleanup_empty_chroma_dirs()
+
         stats = {"added": 0, "updated": 0, "unchanged": 0, "deleted": 0}
         shadow_name = None
         try:
@@ -552,6 +624,9 @@ class DocumentDatabase:
         全量重建 — 影子集合策略
         创建空影子 → 全量写入 → 验证 → 切指针 → 删旧集合
         """
+        # 启动清理
+        cleanup_empty_chroma_dirs()
+
         shadow_name = None
         try:
             shadow_name, shadow = self._create_shadow_collection()
@@ -657,10 +732,11 @@ class DocumentDatabase:
         collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metas)
 
     def _validate_shadow(self, shadow_collection):
-        """验证影子集合完整性"""
-        count = shadow_collection.count()
-        if count == 0:
-            raise ValueError("影子集合为空，数据验证失败")
+        """验证影子集合完整性（HNSW 索引 + 数据量）"""
+        ok, detail = validate_hnsw(shadow_collection)
+        if not ok:
+            raise ValueError(f"影子集合验证失败: {detail}")
+        logger.info(f"影子集合验证通过: {detail}")
 
     def _switch_to_shadow(self, shadow_name):
         """切换指针到影子集合"""

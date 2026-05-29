@@ -23,7 +23,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-logger = logging.getLogger("Ezy-RAG-API")
+# 日志配置 — 统一写入 embedding.log 和 rerank.log
+LOG_DIR = ROOT / "runtime" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+emb_logger = logging.getLogger("EmbeddingAPI")
+emb_handler = logging.FileHandler(LOG_DIR / "embedding.log", encoding="utf-8")
+emb_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+emb_logger.addHandler(emb_handler)
+emb_logger.setLevel(logging.INFO)
+
+rerank_logger = logging.getLogger("RerankAPI")
+rerank_handler = logging.FileHandler(LOG_DIR / "rerank.log", encoding="utf-8")
+rerank_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+rerank_logger.addHandler(rerank_handler)
+rerank_logger.setLevel(logging.INFO)
 
 
 def _detect_provider(url: str) -> str:
@@ -84,7 +98,7 @@ class EmbeddingAPI:
             try:
                 self._dim = int(dim_str)
             except ValueError:
-                logger.warning(f"无效的维度配置: {dim_str}，将自动检测")
+                emb_logger.warning(f"无效的维度配置: {dim_str}，将自动检测")
 
         self._provider = _detect_provider(url)
         self._base_url, self._full_url = _normalize_embedding_url(url)
@@ -96,14 +110,20 @@ class EmbeddingAPI:
         else:
             self._client = None
 
-        logger.info(f"EmbeddingAPI: mode={self._mode}, provider={self._provider}, model={self._model}, base_url={self._base_url}")
+        emb_logger.info(f"init: mode={self._mode}, model={self._model}, base_url={self._base_url}")
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """同步向量化"""
+        t0 = time.time()
         if self._provider == "cohere":
-            return self._embed_cohere(texts)
+            result = self._embed_cohere(texts)
         else:
-            return self._embed_openai(texts)
+            result = self._embed_openai(texts)
+        elapsed = time.time() - t0
+        total_chars = sum(len(t) for t in texts)
+        dim = len(result[0]) if result else 0
+        emb_logger.info(f"embed: {len(texts)} texts, {total_chars} chars, dim={dim}, {elapsed:.2f}s")
+        return result
 
     async def embed_async(self, texts: list[str]) -> list[list[float]]:
         """异步向量化"""
@@ -119,7 +139,7 @@ class EmbeddingAPI:
         # 自动检测维度
         if self._dim is None and vectors:
             self._dim = len(vectors[0])
-            logger.info(f"自动检测 Embedding 维度: {self._dim}")
+            emb_logger.info(f"自动检测 Embedding 维度: {self._dim}")
         return vectors
 
     def _embed_cohere(self, texts: list[str]) -> list[list[float]]:
@@ -190,7 +210,7 @@ class RerankAPI:
 
         self._k = 5
 
-        logger.info(f"RerankAPI: enabled={self._enabled}, mode={self._mode}, url={self._url}")
+        rerank_logger.info(f"init: enabled={self._enabled}, mode={self._mode}, url={self._url}")
 
     def set_k(self, k: int):
         """设置 top-k"""
@@ -204,6 +224,7 @@ class RerankAPI:
         if not self._enabled:
             return [], list(range(len(documents)))
 
+        t0 = time.time()
         import httpx
 
         # 拼接 URL（对齐云端格式 /v1/rerank）
@@ -231,7 +252,6 @@ class RerankAPI:
         if "results" in data:
             scores = [item["relevance_score"] for item in data["results"]]
             indices = [item["index"] for item in data["results"]]
-            return scores, indices
         elif "scores" in data:
             # 兼容旧格式
             all_scores = data["scores"]
@@ -239,9 +259,13 @@ class RerankAPI:
             top_k = indexed_scores[:self._k]
             indices = [i for i, _ in top_k]
             scores = [s for _, s in top_k]
-            return scores, indices
         else:
             raise ValueError(f"未知的 rerank 响应格式: {list(data.keys())}")
+
+        elapsed = time.time() - t0
+        top_scores = [f"{s:.2f}" for s in scores[:3]]
+        rerank_logger.info(f"rerank: {len(documents)} docs, top_scores={top_scores}, {elapsed:.2f}s")
+        return scores, indices
 
     async def rerank_async(self, query: str, documents: list[str]) -> tuple[list[float], list[int]]:
         """异步重排"""

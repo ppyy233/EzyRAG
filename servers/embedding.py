@@ -22,6 +22,7 @@ Ezy-RAG — 本地 Embedding HTTP 服务
 import os
 import sys
 import gc
+import time
 import argparse
 import logging
 from pathlib import Path
@@ -130,6 +131,7 @@ async def create_embeddings(req: EmbeddingRequest):
     if _model is None:
         return JSONResponse({"error": "模型未加载"}, status_code=503)
     
+    t0 = time.time()
     try:
         texts = req.input if isinstance(req.input, list) else [req.input]
         
@@ -158,6 +160,14 @@ async def create_embeddings(req: EmbeddingRequest):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
+        
+        elapsed = time.time() - t0
+        total_chars = sum(len(t) for t in texts)
+        vram = "N/A"
+        if torch.cuda.is_available():
+            vram_mb = torch.cuda.memory_allocated() // 1024 // 1024
+            vram = f"{vram_mb} MiB"
+        logger.info(f"embed: {len(texts)} texts, {total_chars} chars, {elapsed:.2f}s, VRAM={vram}")
         
         return {
             "object": "list",

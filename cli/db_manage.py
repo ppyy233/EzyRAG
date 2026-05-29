@@ -33,7 +33,7 @@ import chromadb
 from config.settings import get_chunk_config, get_collection_name
 from config.pointer import get_active_collection, set_active_collection
 from core.api import EmbeddingAPI
-from core.database import DocumentDatabase, read_file, load_all_documents, SUPPORTED_EXT
+from core.database import DocumentDatabase, read_file, load_all_documents, SUPPORTED_EXT, validate_hnsw, cleanup_empty_chroma_dirs, cleanup_orphan_shadows
 
 
 # ============================================================
@@ -56,10 +56,23 @@ def connect_chroma():
     except Exception as e:
         raise ConnectionError(f"Embedding 服务初始化失败: {e or '请检查 .env 配置'}")
 
+    # 启动清理
+    cleanup_empty_chroma_dirs()
+    cleanup_orphan_shadows(client, get_collection_name())
+
     collection_name = get_active_collection(get_collection_name())
 
     try:
         collection = client.get_collection(name=collection_name)
+        # 验证 HNSW 完整性
+        ok, detail = validate_hnsw(collection)
+        if not ok:
+            print(f"  [!] 集合 {collection_name} {detail}，自动重建...")
+            client.delete_collection(collection_name)
+            collection = client.get_or_create_collection(
+                name=collection_name,
+                metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100},
+            )
     except Exception:
         collection = client.get_or_create_collection(
             name=collection_name,

@@ -7,6 +7,7 @@ Ezy-RAG V0.0.18 — MCP 服务器
 """
 import os
 import sys
+import time
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -115,6 +116,7 @@ async def _get_collection():
 
 async def search_async(query: str) -> str:
     """搜索知识库"""
+    t0 = time.time()
     _check_config_reload()
     # 健康检查
     ok, err = _emb_api.health_check()
@@ -183,6 +185,8 @@ async def search_async(query: str) -> str:
             similarity = max(0, 1 - dist)
             part = f"[{i}] 来源: {fname} | 相似度: {similarity:.2%}\n{doc_text.strip()}"
             parts.append(part)
+        elapsed = time.time() - t0
+        logger.info(f"search: '{query[:50]}' → {len(docs)} results, rerank={rerank_executed}, {elapsed:.2f}s")
         return "\n\n".join(parts)
 
     except Exception as e:

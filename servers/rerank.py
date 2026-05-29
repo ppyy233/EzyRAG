@@ -14,6 +14,7 @@ Ezy-RAG — 本地 Rerank HTTP 服务
 """
 import os
 import sys
+import time
 import argparse
 import logging
 from pathlib import Path
@@ -123,6 +124,7 @@ async def _do_rerank(req: RerankRequest):
     """统一的 rerank 逻辑，返回格式对齐云端 API"""
     if _model is None:
         return JSONResponse({"error": "模型未加载"}, status_code=503)
+    t0 = time.time()
     try:
         pairs = [(req.query, doc) for doc in req.documents]
         raw_scores = _model.predict(pairs, show_progress_bar=False)
@@ -137,9 +139,12 @@ async def _do_rerank(req: RerankRequest):
             {"index": idx, "relevance_score": float(score)}
             for idx, score in indexed_scores
         ]
+        elapsed = time.time() - t0
+        logger.info(f"rerank: {len(req.documents)} docs, {elapsed:.2f}s")
         return {"results": results}
     except Exception as e:
-        logger.error(f"重排失败: {e}")
+        elapsed = time.time() - t0
+        logger.error(f"rerank failed: {e}, {elapsed:.2f}s")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
