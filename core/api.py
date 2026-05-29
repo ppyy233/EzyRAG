@@ -272,7 +272,7 @@ class RerankAPI:
         return await asyncio.to_thread(self.rerank, query, documents)
 
     def health_check(self) -> tuple[bool, str]:
-        """健康检查 — 对称 EmbeddingAPI"""
+        """健康检查"""
         if not self._enabled:
             return True, "未启用"
         try:

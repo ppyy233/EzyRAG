@@ -15,6 +15,7 @@ Ezy-RAG V0.0.18 — 数据库管理工具
 """
 import sys
 import os
+import time
 import argparse
 from pathlib import Path
 
@@ -177,30 +178,35 @@ def add_documents(file_paths: list):
 
     chunk_cfg = get_chunk_config()
     total = 0
-    for file_path in file_paths:
+    t_start = time.time()
+    n = len(file_paths)
+    for i, file_path in enumerate(file_paths, 1):
         full_path = Path(file_path)
         if not full_path.exists():
-            print(f"  [FAIL] 文件不存在: {file_path}")
+            print(f"  [{i}/{n}] [FAIL] 文件不存在: {full_path.name}")
             continue
         ext = full_path.suffix.lower()
         if ext not in SUPPORTED_EXT:
-            print(f"  [SKIP] 不支持的格式: {file_path}")
+            print(f"  [{i}/{n}] [SKIP] 不支持的格式: {full_path.name}")
             continue
         try:
+            t0 = time.time()
             text = read_file(str(full_path))
             if not text or not text.strip():
-                print(f"  [SKIP] 内容为空: {file_path}")
+                print(f"  [{i}/{n}] [SKIP] 内容为空: {full_path.name}")
                 continue
             doc_name = full_path.stem
             text = f"[文件名: {doc_name}]\n{text}"
             doc = {"path": str(full_path), "text": text}
             count = db.add(doc, chunk_cfg, source_type="local_file")
             total += count
-            print(f"  [OK] {full_path.name} ({count} chunks)")
+            elapsed = time.time() - t0
+            print(f"  [{i}/{n}] [OK] {full_path.name} ({count} chunks, {elapsed:.1f}s)")
         except Exception as e:
-            print(f"  [FAIL] {full_path.name}: {e}")
+            print(f"  [{i}/{n}] [FAIL] {full_path.name}: {e}")
 
-    print(f"\n  添加完成! 共 {total} chunks")
+    elapsed_total = time.time() - t_start
+    print(f"\n  添加完成! 共 {total} chunks, 耗时 {elapsed_total:.1f}s")
 
 
 def add_all_documents():
@@ -264,26 +270,31 @@ def update_documents(file_paths: list):
 
     chunk_cfg = get_chunk_config()
     total = 0
-    for file_path in file_paths:
+    t_start = time.time()
+    n = len(file_paths)
+    for i, file_path in enumerate(file_paths, 1):
         full_path = Path(file_path)
         if not full_path.exists():
-            print(f"  [FAIL] 文件不存在: {file_path}")
+            print(f"  [{i}/{n}] [FAIL] 文件不存在: {full_path.name}")
             continue
         try:
+            t0 = time.time()
             text = read_file(str(full_path))
             if not text or not text.strip():
-                print(f"  [SKIP] 内容为空: {file_path}")
+                print(f"  [{i}/{n}] [SKIP] 内容为空: {full_path.name}")
                 continue
             doc_name = full_path.stem
             text = f"[文件名: {doc_name}]\n{text}"
             doc = {"path": str(full_path), "text": text}
             count = db.update(doc, chunk_cfg, source_type="local_file")
             total += count
-            print(f"  [OK] {full_path.name} ({count} chunks)")
+            elapsed = time.time() - t0
+            print(f"  [{i}/{n}] [OK] {full_path.name} ({count} chunks, {elapsed:.1f}s)")
         except Exception as e:
-            print(f"  [FAIL] {full_path.name}: {e}")
+            print(f"  [{i}/{n}] [FAIL] {full_path.name}: {e}")
 
-    print(f"\n  更新完成! 共 {total} chunks")
+    elapsed_total = time.time() - t_start
+    print(f"\n  更新完成! 共 {total} chunks, 耗时 {elapsed_total:.1f}s")
 
 
 def update_all_documents():
@@ -320,14 +331,16 @@ def sync_documents():
         print("  没有本地文档")
         return
 
+    t_start = time.time()
     stats = db.sync(documents, chunk_cfg)
+    elapsed = time.time() - t_start
     total_ops = stats["added"] + stats["updated"] + stats["deleted"]
     if total_ops == 0:
         print(f"\n  无变化（{stats['unchanged']} 个文件未变）")
     else:
         print(f"\n  新增: {stats['added']}  更新: {stats['updated']}  "
               f"未变: {stats['unchanged']}  删除: {stats['deleted']}")
-    print(f"  同步完成! 当前 {db.count()} 条记录")
+    print(f"  同步完成! 当前 {db.count()} 条记录, 耗时 {elapsed:.1f}s")
 
 
 def rebuild_database():
@@ -353,8 +366,10 @@ def rebuild_database():
         print("  没有文档")
         return
 
+    t_start = time.time()
     count = db.rebuild(documents, chunk_cfg)
-    print(f"\n  重建完成! {count} chunks")
+    elapsed = time.time() - t_start
+    print(f"\n  重建完成! {count} chunks, 耗时 {elapsed:.1f}s")
 
 
 def clean_orphan_records():
