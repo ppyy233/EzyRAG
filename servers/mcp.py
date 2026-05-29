@@ -53,11 +53,13 @@ _scheduler = None
 _chroma_client = None
 _chroma_collection = None
 _active_collection_name = None
+_env_mtime = 0.0
+_env_file = ROOT / "config" / ".env"
 
 
 def _init_services():
     """初始化所有服务"""
-    global _emb_api, _rerank_api, _scheduler
+    global _emb_api, _rerank_api, _scheduler, _env_mtime
     from core.api import EmbeddingAPI, RerankAPI
     from core.scheduler import get_scheduler
 
@@ -65,6 +67,25 @@ def _init_services():
     _rerank_api = RerankAPI()
     _rerank_api.set_k(RETRIEVAL_K)
     _scheduler = get_scheduler()
+    _env_mtime = _env_file.stat().st_mtime if _env_file.exists() else 0.0
+
+
+def _check_config_reload():
+    """检查 .env 是否变化，如果变了就重新加载"""
+    global _emb_api, _rerank_api, _scheduler, _env_mtime
+    if not _env_file.exists():
+        return
+    current_mtime = _env_file.stat().st_mtime
+    if current_mtime != _env_mtime:
+        logger.info("检测到 .env 变化，重新加载配置...")
+        from dotenv import load_dotenv
+        load_dotenv(_env_file, override=True)
+        from core.api import EmbeddingAPI, RerankAPI
+        _emb_api = EmbeddingAPI()
+        _rerank_api = RerankAPI()
+        _rerank_api.set_k(RETRIEVAL_K)
+        _env_mtime = current_mtime
+        logger.info("配置重新加载完成")
 
 
 async def _get_collection():
@@ -94,6 +115,7 @@ async def _get_collection():
 
 async def search_async(query: str) -> str:
     """搜索知识库"""
+    _check_config_reload()
     # 健康检查
     ok, err = _emb_api.health_check()
     if not ok:
@@ -175,6 +197,7 @@ async def search_async(query: str) -> str:
 @app.get("/health")
 async def health_check():
     """健康检查"""
+    _check_config_reload()
     emb_ok, emb_err = _emb_api.health_check() if _emb_api else (False, "未初始化")
     rerank_ok, rerank_err = _rerank_api.health_check() if _rerank_api else (False, "未初始化")
 

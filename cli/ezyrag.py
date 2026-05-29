@@ -350,52 +350,35 @@ def cmd_health():
     print(f"  {'✓' if mcp_ok else '✗'} MCP         : {'运行中' if mcp_ok else '未运行'} ({mcp_host}:{mcp_port})")
     
     # Embedding
-    embedding_mode = env_config.get("EMBEDDING_MODE", "cloud")
-    if embedding_mode == "local":
-        embedding_url = env_config.get("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings")
-        try:
-            embedding_port = int(embedding_url.split(":")[-1].split("/")[0])
-        except:
-            embedding_port = 1234
-        embedding_ok = check_port("127.0.0.1", embedding_port)
-        print(f"  {'✓' if embedding_ok else '✗'} Embedding   : {'运行中' if embedding_ok else '未运行'} (本地模式, 端口 {embedding_port})")
-    else:
-        embedding_url = env_config.get("EMBEDDING_CLOUD_URL", "https://api.siliconflow.cn/v1/embeddings")
-        api_key = env_config.get("EMBEDDING_CLOUD_API_KEY", "")
-        try:
-            domain = embedding_url.split("//")[1].split("/")[0]
-        except:
-            domain = "unknown"
-        if api_key:
-            print(f"  ✓ Embedding   : 已配置 (云端模式, {domain})")
+    try:
+        from core.api import EmbeddingAPI
+        emb = EmbeddingAPI()
+        emb_ok, emb_err = emb.health_check()
+        emb_info = emb.get_info()
+        mode_str = "本地" if emb_info["mode"] == "local" else "云端"
+        if emb_ok:
+            print(f"  ✓ Embedding   : 在线 ({mode_str}, {emb_info['model']})")
         else:
-            print(f"  ✗ Embedding   : 未配置 (云端模式, {domain})")
+            print(f"  ✗ Embedding   : 不可用 ({mode_str}, {emb_err})")
+    except Exception as e:
+        print(f"  ✗ Embedding   : 初始化失败 ({e})")
     
     # Rerank
-    rerank_enabled = env_config.get("RERANK_ENABLED", "true").lower() == "true"
-    if rerank_enabled:
-        rerank_mode = env_config.get("RERANK_MODE", "local")
-        if rerank_mode == "local":
-            rerank_url = env_config.get("RERANK_LOCAL_URL", "http://127.0.0.1:5001")
-            try:
-                rerank_port = int(rerank_url.split(":")[-1].split("/")[0])
-            except:
-                rerank_port = 5001
-            rerank_ok = check_port("127.0.0.1", rerank_port)
-            print(f"  {'✓' if rerank_ok else '✗'} Rerank      : {'运行中' if rerank_ok else '未运行'} (本地模式, 端口 {rerank_port})")
-        else:
-            rerank_url = env_config.get("RERANK_CLOUD_URL", "https://api.cohere.com/v1/rerank")
-            api_key = env_config.get("RERANK_CLOUD_API_KEY", "")
-            try:
-                domain = rerank_url.split("//")[1].split("/")[0]
-            except:
-                domain = "unknown"
-            if api_key:
-                print(f"  ✓ Rerank      : 已配置 (云端模式, {domain})")
+    try:
+        from core.api import RerankAPI
+        rerank = RerankAPI()
+        rerank_info = rerank.get_info()
+        if rerank_info["enabled"]:
+            rerank_ok, rerank_err = rerank.health_check()
+            mode_str = "本地" if rerank_info["mode"] == "local" else "云端"
+            if rerank_ok:
+                print(f"  ✓ Rerank      : 在线 ({mode_str}, {rerank_info['model']})")
             else:
-                print(f"  ✗ Rerank      : 未配置 (云端模式, {domain})")
-    else:
-        print(f"  - Rerank      : 未启用")
+                print(f"  ✗ Rerank      : 不可用 ({mode_str}, {rerank_err})")
+        else:
+            print(f"  - Rerank      : 未启用")
+    except Exception as e:
+        print(f"  ✗ Rerank      : 初始化失败 ({e})")
     
     # 数据库状态
     print("\n  数据库状态：")

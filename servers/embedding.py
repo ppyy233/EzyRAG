@@ -21,6 +21,7 @@ Ezy-RAG — 本地 Embedding HTTP 服务
 """
 import os
 import sys
+import gc
 import argparse
 import logging
 from pathlib import Path
@@ -105,6 +106,25 @@ class EmbeddingRequest(BaseModel):
     dimensions: int = None
 
 
+@app.get("/v1/models")
+async def list_models():
+    """OpenAI 兼容的模型列表端点"""
+    return {
+        "object": "list",
+        "data": [{
+            "id": _model_name or "unknown",
+            "object": "model",
+            "owned_by": "local",
+        }],
+    }
+
+
+@app.get("/health")
+async def health():
+    """健康检查端点"""
+    return {"status": "ok", "model": "loaded" if _model else "not_loaded"}
+
+
 @app.post("/v1/embeddings")
 async def create_embeddings(req: EmbeddingRequest):
     if _model is None:
@@ -113,28 +133,31 @@ async def create_embeddings(req: EmbeddingRequest):
     try:
         texts = req.input if isinstance(req.input, list) else [req.input]
         
-        # 生成 embedding（使用no_grad避免保存梯度，减少显存占用）
-        with torch.no_grad():
-            embeddings = _model.encode(texts, show_progress_bar=False)
+        # 逐条处理，避免大批量导致显存爆炸
+        all_embeddings = []
+        for text in texts:
+            with torch.no_grad():
+                emb = _model.encode([text], show_progress_bar=False)
+            all_embeddings.append(emb[0])
         
-        # 如果指定了维度，调整维度
+        # 转为 Python list，释放 GPU 张量
         if req.dimensions is not None:
             target_dim = req.dimensions
-            adjusted_embeddings = []
-            for emb in embeddings:
+            result = []
+            for emb in all_embeddings:
                 if len(emb) > target_dim:
-                    adjusted_embeddings.append(emb[:target_dim].tolist())
+                    result.append(emb[:target_dim].tolist())
                 elif len(emb) < target_dim:
-                    adjusted_embeddings.append(emb.tolist() + [0.0] * (target_dim - len(emb)))
+                    result.append(emb.tolist() + [0.0] * (target_dim - len(emb)))
                 else:
-                    adjusted_embeddings.append(emb.tolist())
-            embeddings = adjusted_embeddings
+                    result.append(emb.tolist())
         else:
-            embeddings = [emb.tolist() for emb in embeddings]
+            result = [emb.tolist() for emb in all_embeddings]
         
-        # 清理GPU缓存，防止显存泄漏
+        del all_embeddings
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        gc.collect()
         
         return {
             "object": "list",
@@ -145,7 +168,7 @@ async def create_embeddings(req: EmbeddingRequest):
                     "embedding": emb,
                     "index": i
                 }
-                for i, emb in enumerate(embeddings)
+                for i, emb in enumerate(result)
             ],
             "usage": {
                 "prompt_tokens": sum(len(t.split()) for t in texts),
@@ -158,6 +181,7 @@ async def create_embeddings(req: EmbeddingRequest):
         # 异常时也清理GPU缓存
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        gc.collect()
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

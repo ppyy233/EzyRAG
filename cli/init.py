@@ -429,11 +429,12 @@ def reset_config():
             shutil.copy(CONFIG_FILE, backup_file)
             print(f"已备份 config.json 到: {backup_file}")
 
-        # 重置为默认配置
+        # 重置为默认配置（保留现有的 API key）
+        current_env = load_env()
         default_env = {
             "EMBEDDING_MODE": "cloud",
             "EMBEDDING_CLOUD_URL": "https://api.siliconflow.cn/v1/embeddings",
-            "EMBEDDING_CLOUD_API_KEY": "",
+            "EMBEDDING_CLOUD_API_KEY": current_env.get("EMBEDDING_CLOUD_API_KEY", ""),
             "EMBEDDING_CLOUD_MODEL": "BAAI/bge-m3",
             "EMBEDDING_CLOUD_DIM": "",
             "EMBEDDING_LOCAL_URL": "http://127.0.0.1:1234/v1/embeddings",
@@ -442,7 +443,7 @@ def reset_config():
             "RERANK_ENABLED": "true",
             "RERANK_MODE": "local",
             "RERANK_CLOUD_URL": "https://api.siliconflow.cn/v1/rerank",
-            "RERANK_CLOUD_API_KEY": "",
+            "RERANK_CLOUD_API_KEY": current_env.get("RERANK_CLOUD_API_KEY", ""),
             "RERANK_CLOUD_MODEL": "BAAI/bge-reranker-v2-m3",
             "RERANK_LOCAL_URL": "http://127.0.0.1:5001",
             "RERANK_LOCAL_MODEL_PATH": "data/models/rerank",

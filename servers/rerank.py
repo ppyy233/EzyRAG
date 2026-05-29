@@ -97,17 +97,47 @@ def load_model(model_path: str = None):
 class RerankRequest(BaseModel):
     query: str
     documents: list[str]
+    model: str = None
+    top_n: int = None
+
+
+@app.get("/health")
+async def health():
+    """健康检查端点"""
+    return {"status": "ok", "model": "loaded" if _model else "not_loaded"}
 
 
 @app.post("/rerank")
 async def rerank(req: RerankRequest):
+    """本地 rerank（兼容旧路径）"""
+    return await _do_rerank(req)
+
+
+@app.post("/v1/rerank")
+async def rerank_v1(req: RerankRequest):
+    """OpenAI 兼容的 rerank 端点（对称 embedding 的 /v1/embeddings）"""
+    return await _do_rerank(req)
+
+
+async def _do_rerank(req: RerankRequest):
+    """统一的 rerank 逻辑，返回格式对齐云端 API"""
     if _model is None:
         return JSONResponse({"error": "模型未加载"}, status_code=503)
     try:
         pairs = [(req.query, doc) for doc in req.documents]
         raw_scores = _model.predict(pairs, show_progress_bar=False)
-        scores = [float(s) for s in raw_scores]
-        return {"scores": scores}
+
+        # 按分数排序，取 top_n
+        indexed_scores = sorted(enumerate(raw_scores), key=lambda x: x[1], reverse=True)
+        if req.top_n is not None:
+            indexed_scores = indexed_scores[:req.top_n]
+
+        # 返回格式对齐云端 API（SiliconFlow/Cohere 格式）
+        results = [
+            {"index": idx, "relevance_score": float(score)}
+            for idx, score in indexed_scores
+        ]
+        return {"results": results}
     except Exception as e:
         logger.error(f"重排失败: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)

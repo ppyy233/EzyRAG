@@ -172,22 +172,23 @@ class EmbeddingAPI:
 # ============================================================
 
 class RerankAPI:
-    """统一的 Rerank API 适配器"""
+    """统一的 Rerank API 适配器（本地/云端接口一致）"""
 
     def __init__(self):
         self._enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
         self._mode = os.getenv("RERANK_MODE", "local").lower()
 
+        # 读取 URL 和认证信息（本地和云端的区别只是地址和 key）
         if self._mode == "cloud":
-            self._url = os.getenv("RERANK_CLOUD_URL", "https://api.cohere.com/v1/rerank").rstrip("/")
+            self._url = os.getenv("RERANK_CLOUD_URL", "https://api.siliconflow.cn/v1/rerank").rstrip("/")
             self._api_key = os.getenv("RERANK_CLOUD_API_KEY", "")
-            self._model = os.getenv("RERANK_CLOUD_MODEL", "rerank-multilingual-v3.0")
+            self._model = os.getenv("RERANK_CLOUD_MODEL", "BAAI/bge-reranker-v2-m3")
         else:
             self._url = os.getenv("RERANK_LOCAL_URL", "http://127.0.0.1:5001").rstrip("/")
             self._api_key = ""
             self._model = "local"
 
-        self._k = 5  # 默认 top-k，由 config.json 的 retrieval.k 覆盖
+        self._k = 5
 
         logger.info(f"RerankAPI: enabled={self._enabled}, mode={self._mode}, url={self._url}")
 
@@ -197,84 +198,72 @@ class RerankAPI:
 
     def rerank(self, query: str, documents: list[str]) -> tuple[list[float], list[int]]:
         """
-        同步重排
+        同步重排 — 本地和云端统一调用方式
         返回: (scores, indices)
         """
         if not self._enabled:
             return [], list(range(len(documents)))
 
-        if self._mode == "cloud":
-            return self._rerank_cloud(query, documents)
-        else:
-            return self._rerank_local(query, documents)
-
-    async def rerank_async(self, query: str, documents: list[str]) -> tuple[list[float], list[int]]:
-        """异步重排"""
-        return await asyncio.to_thread(self.rerank, query, documents)
-
-    def _rerank_local(self, query: str, documents: list[str]) -> tuple[list[float], list[int]]:
-        """本地 Rerank"""
         import httpx
-        url = self._url + "/rerank"
-        headers = {"Content-Type": "application/json"}
-        with httpx.Client(timeout=30) as client:
-            r = client.post(url, json={"query": query, "documents": documents}, headers=headers)
-            r.raise_for_status()
-            all_scores = r.json()["scores"]
-            indexed_scores = sorted(enumerate(all_scores), key=lambda x: x[1], reverse=True)
-            top_k = indexed_scores[:self._k]
-            indices = [i for i, _ in top_k]
-            scores = [s for _, s in top_k]
-            return scores, indices
 
-    def _rerank_cloud(self, query: str, documents: list[str]) -> tuple[list[float], list[int]]:
-        """云端 Rerank"""
-        import httpx
+        # 拼接 URL（对齐云端格式 /v1/rerank）
         url = self._url
         if not url.endswith("/rerank"):
             url = url + "/rerank"
 
+        # 统一请求格式（本地 server 和云端 API 接受相同的格式）
         payload = {
             "model": self._model,
             "query": query,
             "documents": documents,
             "top_n": self._k,
         }
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
-        if "cohere.com" not in url:
-            payload["return_documents"] = False
+        headers = {"Content-Type": "application/json"}
+        if self._api_key and self._api_key != "local":
+            headers["Authorization"] = f"Bearer {self._api_key}"
 
         with httpx.Client(timeout=30) as client:
             r = client.post(url, json=payload, headers=headers)
             r.raise_for_status()
             data = r.json()
 
-            if "results" in data:
-                scores = [item["relevance_score"] for item in data["results"]]
-                indices = [item["index"] for item in data["results"]]
-                return scores, indices
-            elif "scores" in data:
-                all_scores = data["scores"]
-                indexed_scores = sorted(enumerate(all_scores), key=lambda x: x[1], reverse=True)
-                top_k = indexed_scores[:self._k]
-                indices = [i for i, _ in top_k]
-                scores = [s for _, s in top_k]
-                return scores, indices
-            else:
-                raise ValueError(f"未知的 rerank 响应格式: {list(data.keys())}")
+        # 统一响应解析（本地 server 和云端 API 返回相同的格式）
+        if "results" in data:
+            scores = [item["relevance_score"] for item in data["results"]]
+            indices = [item["index"] for item in data["results"]]
+            return scores, indices
+        elif "scores" in data:
+            # 兼容旧格式
+            all_scores = data["scores"]
+            indexed_scores = sorted(enumerate(all_scores), key=lambda x: x[1], reverse=True)
+            top_k = indexed_scores[:self._k]
+            indices = [i for i, _ in top_k]
+            scores = [s for _, s in top_k]
+            return scores, indices
+        else:
+            raise ValueError(f"未知的 rerank 响应格式: {list(data.keys())}")
+
+    async def rerank_async(self, query: str, documents: list[str]) -> tuple[list[float], list[int]]:
+        """异步重排"""
+        return await asyncio.to_thread(self.rerank, query, documents)
 
     def health_check(self) -> tuple[bool, str]:
-        """健康检查"""
+        """健康检查 — 对称 EmbeddingAPI"""
         if not self._enabled:
             return True, "未启用"
         try:
             import httpx
+            headers = {}
+            if self._api_key and self._api_key != "local":
+                headers["Authorization"] = f"Bearer {self._api_key}"
             with httpx.Client(timeout=3) as c:
-                r = c.get(f"{self._url}/health" if self._mode == "local" else self._url)
-                return r.status_code == 200, ""
+                r = c.get(f"{self._url}/health", headers=headers)
+                if r.status_code == 200:
+                    return True, ""
+                # 云端模式：404 也算在线（云端没有 /health 端点）
+                if self._mode == "cloud":
+                    return True, ""
+                return False, f"状态码 {r.status_code}"
         except Exception as e:
             return False, str(e)
 
