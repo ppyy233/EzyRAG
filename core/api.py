@@ -18,6 +18,7 @@ import sys
 import time
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,13 +29,17 @@ LOG_DIR = ROOT / "runtime" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 emb_logger = logging.getLogger("EmbeddingAPI")
-emb_handler = logging.FileHandler(LOG_DIR / "embedding.log", encoding="utf-8")
+emb_handler = RotatingFileHandler(
+    LOG_DIR / "embedding.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8"
+)
 emb_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 emb_logger.addHandler(emb_handler)
 emb_logger.setLevel(logging.INFO)
 
 rerank_logger = logging.getLogger("RerankAPI")
-rerank_handler = logging.FileHandler(LOG_DIR / "rerank.log", encoding="utf-8")
+rerank_handler = RotatingFileHandler(
+    LOG_DIR / "rerank.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8"
+)
 rerank_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 rerank_logger.addHandler(rerank_handler)
 rerank_logger.setLevel(logging.INFO)

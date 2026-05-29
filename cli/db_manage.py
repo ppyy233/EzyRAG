@@ -38,6 +38,24 @@ from core.database import DocumentDatabase, read_file, load_all_documents, SUPPO
 
 
 # ============================================================
+#  进度回调
+# ============================================================
+
+def _progress(op, idx, total, name, count):
+    """数据库操作进度回调"""
+    if op == "copy":
+        print(f"  复制进度: {idx}/{total}", flush=True)
+    elif op == "add":
+        print(f"  [{idx}/{total}] +新增: {name} ({count} chunks)", flush=True)
+    elif op == "update":
+        print(f"  [{idx}/{total}] ~更新: {name} ({count} chunks)", flush=True)
+    elif op == "delete":
+        print(f"  -删除: {name}", flush=True)
+    elif op == "rebuild":
+        print(f"  [{idx}/{total}] {name} ({count} chunks)", flush=True)
+
+
+# ============================================================
 #  连接辅助
 # ============================================================
 
@@ -330,9 +348,10 @@ def sync_documents():
     if not documents:
         print("  没有本地文档")
         return
+    print(f"  共加载 {len(documents)} 份文档")
 
     t_start = time.time()
-    stats = db.sync(documents, chunk_cfg)
+    stats = db.sync(documents, chunk_cfg, on_progress=_progress)
     elapsed = time.time() - t_start
     total_ops = stats["added"] + stats["updated"] + stats["deleted"]
     if total_ops == 0:
@@ -365,9 +384,10 @@ def rebuild_database():
     if not documents:
         print("  没有文档")
         return
+    print(f"  共加载 {len(documents)} 份文档")
 
     t_start = time.time()
-    count = db.rebuild(documents, chunk_cfg)
+    count = db.rebuild(documents, chunk_cfg, on_progress=_progress)
     elapsed = time.time() - t_start
     print(f"\n  重建完成! {count} chunks, 耗时 {elapsed:.1f}s")
 

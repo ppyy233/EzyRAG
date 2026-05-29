@@ -19,6 +19,7 @@ import hashlib
 import logging
 import argparse
 import shutil
+import shutil
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -34,6 +35,9 @@ from config.pointer import (
     read_pointer, write_pointer, get_active_collection, set_active_collection,
 )
 import chromadb
+
+# Embedding API 单次最大批量（从环境变量读取，默认 50）
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "50"))
 
 logger = logging.getLogger("Ezy-RAG-DB")
 
@@ -126,12 +130,12 @@ def load_all_documents(docs_dir: Path) -> List[dict]:
                     doc_name = f.stem
                     text = f"[文件名: {doc_name}]\n{text}"
                     documents.append({"path": str(f), "text": text})
-                    print(f"  [OK] {rel} ({len(text)} 字)")
+                    logger.info(f"加载: {rel} ({len(text)} 字)")
                 else:
-                    print(f"  [跳过] {f.name} (无文字内容)")
+                    logger.debug(f"跳过: {f.name} (无文字内容)")
             except Exception as e:
-                print(f"  [失败] {f.name}: {e}")
-    print(f"\n共加载 {len(documents)} 份文档")
+                logger.warning(f"加载失败: {f.name}: {e}")
+    logger.info(f"共加载 {len(documents)} 份文档")
     return documents
 
 
@@ -563,31 +567,34 @@ class DocumentDatabase:
             self._cleanup_failed_shadow(shadow_name)
             raise
 
-    def sync(self, documents: List[dict], chunk_cfg: dict, source_type: str = "local_file") -> dict:
+    def sync(self, documents: List[dict], chunk_cfg: dict, source_type: str = "local_file", on_progress=None) -> dict:
         """
         同步文档 — 影子集合策略
         对比 hash，自动增删改
+        on_progress(op, idx, total, name, count) — 进度回调
         """
-        # 启动清理
         cleanup_empty_chroma_dirs()
 
         stats = {"added": 0, "updated": 0, "unchanged": 0, "deleted": 0}
         shadow_name = None
         try:
             shadow_name, shadow = self._create_shadow_collection()
-            self._copy_to_shadow(shadow)
+            self._copy_to_shadow(shadow, on_progress=on_progress)
 
             current_sources = {d["path"] for d in documents}
             stored_sources = self.list_sources()
 
-            # 新增 + 更新
-            for doc in documents:
+            n = len(documents)
+            for idx, doc in enumerate(documents, 1):
                 source = doc["path"]
+                fname = Path(source).name
                 if not self.exists(source):
                     chunks = chunk_single_document(doc, chunk_cfg, source_type)
                     if chunks:
                         self._add_to_collection(shadow, chunks)
                         stats["added"] += len(chunks)
+                        if on_progress:
+                            on_progress("add", idx, n, fname, len(chunks))
                 else:
                     stored_h = self.get_hash(source)
                     current_h = content_hash(doc["text"])
@@ -597,13 +604,17 @@ class DocumentDatabase:
                         if chunks:
                             self._add_to_collection(shadow, chunks)
                             stats["updated"] += len(chunks)
+                            if on_progress:
+                                on_progress("update", idx, n, fname, len(chunks))
                     else:
                         stats["unchanged"] += 1
 
-            # 删除
-            for source in stored_sources - current_sources:
+            deleted_sources = stored_sources - current_sources
+            for source in deleted_sources:
                 shadow.delete(where={"source": source})
                 stats["deleted"] += 1
+                if on_progress:
+                    on_progress("delete", 0, 0, Path(source).name, 0)
 
             self._validate_shadow(shadow)
             self._switch_to_shadow(shadow_name)
@@ -619,12 +630,11 @@ class DocumentDatabase:
             self._cleanup_failed_shadow(shadow_name)
             raise
 
-    def rebuild(self, documents: List[dict], chunk_cfg: dict, source_type: str = "local_file") -> int:
+    def rebuild(self, documents: List[dict], chunk_cfg: dict, source_type: str = "local_file", on_progress=None) -> int:
         """
         全量重建 — 影子集合策略
-        创建空影子 → 全量写入 → 验证 → 切指针 → 删旧集合
+        on_progress(op, idx, total, name, count) — 进度回调
         """
-        # 启动清理
         cleanup_empty_chroma_dirs()
 
         shadow_name = None
@@ -632,13 +642,15 @@ class DocumentDatabase:
             shadow_name, shadow = self._create_shadow_collection()
 
             total = 0
+            n = len(documents)
             for i, doc in enumerate(documents, 1):
                 chunks = chunk_single_document(doc, chunk_cfg, source_type)
                 if chunks:
                     self._add_to_collection(shadow, chunks)
                     total += len(chunks)
                     rel = Path(doc["path"]).name
-                    print(f"  [{i}/{len(documents)}] {rel} ({len(chunks)} chunks)")
+                    if on_progress:
+                        on_progress("rebuild", i, n, rel, len(chunks))
 
             self._validate_shadow(shadow)
             self._switch_to_shadow(shadow_name)
@@ -685,25 +697,18 @@ class DocumentDatabase:
         logger.info(f"创建影子集合: {shadow_name}")
         return shadow_name, shadow
 
-    def _copy_to_shadow(self, shadow_collection):
-        """将当前集合数据复制到影子集合
-
-        注意：不取 embeddings（ChromaDB 有 tolist bug），改为重新向量化文档。
-        虽然有性能开销，但这是唯一可靠的方案。
-        """
+    def _copy_to_shadow(self, shadow_collection, on_progress=None):
+        """将当前集合数据复制到影子集合"""
         result = self.collection.get(include=["metadatas", "documents"])
         if not result or not result["ids"]:
             return 0
 
-        batch_size = 50
         total = len(result["ids"])
+        for i in range(0, total, EMBED_BATCH_SIZE):
+            batch_ids = result["ids"][i:i + EMBED_BATCH_SIZE]
+            batch_documents = result["documents"][i:i + EMBED_BATCH_SIZE]
+            batch_metadatas = result["metadatas"][i:i + EMBED_BATCH_SIZE]
 
-        for i in range(0, total, batch_size):
-            batch_ids = result["ids"][i:i + batch_size]
-            batch_documents = result["documents"][i:i + batch_size]
-            batch_metadatas = result["metadatas"][i:i + batch_size]
-
-            # 重新向量化文档（避免 ChromaDB 的 tolist bug）
             batch_embeddings = self.emb_api.embed(batch_documents)
 
             shadow_collection.add(
@@ -712,24 +717,30 @@ class DocumentDatabase:
                 documents=batch_documents,
                 metadatas=batch_metadatas,
             )
+            done = min(i + EMBED_BATCH_SIZE, total)
+            if on_progress:
+                on_progress("copy", done, total, "", 0)
 
-        logger.info(f"复制 {total} 条记录到影子集合（重新向量化）")
+        logger.info(f"复制 {total} 条记录到影子集合")
         return total
 
     def _add_to_collection(self, collection, chunks: List[dict]):
-        """向指定集合添加 chunks"""
-        ids = [c["id"] for c in chunks]
-        texts = [c["text"] for c in chunks]
-        metas = [{
-            "source": c["source"],
-            "source_type": c["source_type"],
-            "source_name": c["source_name"],
-            "chunk_index": c["chunk_index"],
-            "content_hash": c["content_hash"],
-            "created_at": c["created_at"],
-        } for c in chunks]
-        embeddings = self.emb_api.embed(texts)
-        collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metas)
+        """向指定集合添加 chunks（分批处理）"""
+        total = len(chunks)
+        for i in range(0, total, EMBED_BATCH_SIZE):
+            batch = chunks[i:i + EMBED_BATCH_SIZE]
+            ids = [c["id"] for c in batch]
+            texts = [c["text"] for c in batch]
+            metas = [{
+                "source": c["source"],
+                "source_type": c["source_type"],
+                "source_name": c["source_name"],
+                "chunk_index": c["chunk_index"],
+                "content_hash": c["content_hash"],
+                "created_at": c["created_at"],
+            } for c in batch]
+            embeddings = self.emb_api.embed(texts)
+            collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metas)
 
     def _validate_shadow(self, shadow_collection):
         """验证影子集合完整性（HNSW 索引 + 数据量）"""
@@ -775,11 +786,11 @@ class DocumentDatabase:
             except Exception:
                 pass
 
-    def _batch_add(self, chunks: List[dict], batch_size: int = 50):
+    def _batch_add(self, chunks: List[dict]):
         """批量向量化 + 入库"""
         total = len(chunks)
-        for i in range(0, total, batch_size):
-            batch = chunks[i:i + batch_size]
+        for i in range(0, total, EMBED_BATCH_SIZE):
+            batch = chunks[i:i + EMBED_BATCH_SIZE]
             ids = [c["id"] for c in batch]
             texts = [c["text"] for c in batch]
             metas = [{
@@ -792,10 +803,6 @@ class DocumentDatabase:
             } for c in batch]
             embeddings = self.emb_api.embed(texts)
             self.collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metas)
-            done = i + len(batch)
-            pct = min(100, int(done / total * 100))
-            if total > batch_size:
-                print(f"  进度: {done}/{total} ({pct}%)")
 
 
 # ============================================================

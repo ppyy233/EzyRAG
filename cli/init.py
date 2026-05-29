@@ -103,6 +103,10 @@ def save_env(env: dict):
         f.write("# ----- 切块策略 -----\n")
         f.write(f"CHUNK_TEMPLATE={env.get('CHUNK_TEMPLATE', 'academic')}\n")
 
+        # Embedding 批量大小
+        f.write("\n# ----- Embedding 批量大小 -----\n")
+        f.write(f"EMBED_BATCH_SIZE={env.get('EMBED_BATCH_SIZE', '50')}\n")
+
 
 def load_config() -> dict:
     """加载 config.json 文件"""
@@ -451,7 +455,8 @@ def reset_config():
             "CHROMA_SERVER_PORT": "9898",
             "MCP_SERVER_HOST": "127.0.0.1",
             "MCP_SERVER_PORT": "9766",
-            "CHUNK_TEMPLATE": "academic"
+            "CHUNK_TEMPLATE": "academic",
+            "EMBED_BATCH_SIZE": "50"
         }
         save_env(default_env)
 

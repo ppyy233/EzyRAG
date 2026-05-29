@@ -17,6 +17,7 @@ import sys
 import time
 import argparse
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,7 +38,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(LOG_DIR / "rerank.log", encoding="utf-8")
+        RotatingFileHandler(
+            LOG_DIR / "rerank.log",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
     ]
 )
 logger = logging.getLogger("RerankServer")
