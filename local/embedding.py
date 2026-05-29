@@ -29,6 +29,9 @@ from typing import Union
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# 加载环境变量（导入config.settings会自动加载.env）
+import config.settings  # noqa: F401
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -65,17 +68,27 @@ def detect_device():
     return "cpu"
 
 
-def load_model(model_name: str = None):
+def load_model(model_path: str = None):
     global _model, _model_name
     
-    if model_name is None:
-        model_name = "BAAI/bge-large-zh-v1.5"
+    # 优先使用传入的模型路径，否则从环境变量读取
+    load_path = model_path or os.getenv("EMBEDDING_LOCAL_MODEL_PATH", "")
     
-    logger.info(f"加载 Embedding 模型: {model_name}")
+    if not load_path:
+        logger.error("未指定模型路径，请设置 EMBEDDING_LOCAL_MODEL_PATH 或使用 --model-path 参数")
+        sys.exit(1)
+    
+    # 将相对路径转换为绝对路径
+    model_dir = Path(load_path)
+    if not model_dir.is_absolute():
+        model_dir = ROOT / model_dir
+    load_path = str(model_dir)
+    
+    logger.info(f"加载 Embedding 模型: {load_path}")
     from sentence_transformers import SentenceTransformer
     device = detect_device()
-    _model = SentenceTransformer(model_name, device=device, trust_remote_code=True)
-    _model_name = model_name
+    _model = SentenceTransformer(load_path, device=device, trust_remote_code=True)
+    _model_name = load_path
     
     # 获取模型维度
     test_embedding = _model.encode(["test"], show_progress_bar=False)
@@ -145,10 +158,10 @@ def main():
     parser = argparse.ArgumentParser(description="Ezy-RAG 本地 Embedding 服务")
     parser.add_argument("--port", type=int, default=1234)
     parser.add_argument("--host", type=str, default="127.0.0.1")
-    parser.add_argument("--model", type=str, default=None)
+    parser.add_argument("--model-path", type=str, default=None, help="模型路径")
     args = parser.parse_args()
     
-    load_model(args.model)
+    load_model(args.model_path)
     logger.info(f"Embedding Server 启动: http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 

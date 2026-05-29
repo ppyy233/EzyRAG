@@ -21,6 +21,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# 加载环境变量（导入config.settings会自动加载.env）
+import config.settings  # noqa: F401
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -56,30 +59,38 @@ def detect_device():
     return "cpu"
 
 
-def load_model(model_name: str = None):
+def load_model(model_path: str = None):
     global _model
     
-    # 从配置读取模型路径
-    if model_name is None:
-        model_name = str(ROOT / "data" / "models")
+    # 优先使用传入的模型路径，否则从环境变量读取
+    load_path = model_path or os.getenv("RERANK_LOCAL_MODEL_PATH", "")
     
-    # 检查模型文件是否存在
-    model_path = Path(model_name)
-    if not model_path.exists():
-        logger.error(f"模型目录不存在: {model_path}")
-        logger.info(f"请下载模型文件到: {model_path}")
+    if not load_path:
+        logger.error("未指定模型路径，请设置 RERANK_LOCAL_MODEL_PATH 或使用 --model-path 参数")
         sys.exit(1)
     
-    config_file = model_path / "config.json"
+    # 将相对路径转换为绝对路径
+    model_dir = Path(load_path)
+    if not model_dir.is_absolute():
+        model_dir = ROOT / model_dir
+    load_path = str(model_dir)
+    
+    # 检查模型文件是否存在
+    if not model_dir.exists():
+        logger.error(f"模型目录不存在: {model_dir}")
+        logger.info(f"请下载模型文件到: {model_dir}")
+        sys.exit(1)
+    
+    config_file = model_dir / "config.json"
     if not config_file.exists():
         logger.error(f"模型配置文件不存在: {config_file}")
         logger.info(f"请确保模型文件完整")
         sys.exit(1)
     
-    logger.info(f"加载重排模型: {model_name}")
+    logger.info(f"加载重排模型: {load_path}")
     from sentence_transformers import CrossEncoder
     device = detect_device()
-    _model = CrossEncoder(model_name, device=device, trust_remote_code=True)
+    _model = CrossEncoder(load_path, device=device, trust_remote_code=True)
     logger.info("重排模型就绪")
 
 
@@ -106,10 +117,10 @@ def main():
     parser = argparse.ArgumentParser(description="Ezy-RAG 本地 Rerank 服务")
     parser.add_argument("--port", type=int, default=5001)
     parser.add_argument("--host", type=str, default="127.0.0.1")
-    parser.add_argument("--model", type=str, default=None)
+    parser.add_argument("--model-path", type=str, default=None, help="模型路径")
     args = parser.parse_args()
 
-    load_model(args.model)
+    load_model(args.model_path)
     logger.info(f"Rerank Server 启动: http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 

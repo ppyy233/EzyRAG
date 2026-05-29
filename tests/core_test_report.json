@@ -1,0 +1,143 @@
+{
+  "start_time": "2026-05-29T14:49:45.901053",
+  "total": 27,
+  "passed": 27,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Priority queue order",
+      "passed": true,
+      "details": "expected=[0, 0, 50, 100, 100], got=[0, 0, 50, 100, 100]"
+    },
+    {
+      "name": "Query before build",
+      "passed": true,
+      "details": "execution_order=[0, 100]"
+    },
+    {
+      "name": "Query result exists",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Build result exists",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "All queries completed",
+      "passed": true,
+      "details": "completed=5, expected=5"
+    },
+    {
+      "name": "All results valid",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Add document",
+      "passed": true,
+      "details": "chunks=1"
+    },
+    {
+      "name": "Update document",
+      "passed": true,
+      "details": "chunks=1"
+    },
+    {
+      "name": "Document updated correctly",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Data loss on update failure",
+      "passed": true,
+      "details": "Document should not exist after failed update (data loss)"
+    },
+    {
+      "name": "Initial state: doc_a added",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Sync stats: added",
+      "passed": true,
+      "details": "added=1"
+    },
+    {
+      "name": "Sync stats: updated",
+      "passed": true,
+      "details": "updated=1"
+    },
+    {
+      "name": "doc_a exists after sync",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "doc_b exists after sync",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Build full completed",
+      "passed": true,
+      "details": "chunks=2"
+    },
+    {
+      "name": "Collection created",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Data integrity",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Old collection preserved on failure",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Initial documents added",
+      "passed": true,
+      "details": "count=3"
+    },
+    {
+      "name": "Original docs preserved after crash",
+      "passed": true,
+      "details": "count=4"
+    },
+    {
+      "name": "Doc doc1.txt exists",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Doc doc2.txt exists",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Doc doc3.txt exists",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Hash functions consistent",
+      "passed": true,
+      "details": "repo=6fa72320568f90357f4698aa8a37ab4e, builder=6fa72320568f90357f4698aa8a37ab4e"
+    },
+    {
+      "name": "Same content same hash",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Different content different hash",
+      "passed": true,
+      "details": ""
+    }
+  ]
+}

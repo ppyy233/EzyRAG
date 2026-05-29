@@ -54,7 +54,7 @@ def save_env(env: dict):
         f.write("\n# 本地配置\n")
         local_embedding = {
             "EMBEDDING_LOCAL_URL": "http://127.0.0.1:1234/v1/embeddings",
-            "EMBEDDING_LOCAL_MODEL": "text-embedding-qwen3-embedding-4b",
+            "EMBEDDING_LOCAL_MODEL_PATH": "data/models/embedding",
             "EMBEDDING_LOCAL_DIM": "2560"
         }
         for key, default in local_embedding.items():
@@ -189,7 +189,7 @@ def update_embedding_config(env: dict):
     elif mode_choice == "2":
         env['EMBEDDING_MODE'] = 'local'
         env['EMBEDDING_LOCAL_URL'] = input(f"本地服务 URL [{env.get('EMBEDDING_LOCAL_URL', 'http://127.0.0.1:1234/v1/embeddings')}]: ").strip() or env.get('EMBEDDING_LOCAL_URL', 'http://127.0.0.1:1234/v1/embeddings')
-        env['EMBEDDING_LOCAL_MODEL'] = input(f"模型名称 [{env.get('EMBEDDING_LOCAL_MODEL', 'text-embedding-qwen3-embedding-4b')}]: ").strip() or env.get('EMBEDDING_LOCAL_MODEL', 'text-embedding-qwen3-embedding-4b')
+        env['EMBEDDING_LOCAL_MODEL_PATH'] = input(f"本地模型路径 [{env.get('EMBEDDING_LOCAL_MODEL_PATH', 'data/models/embedding')}]: ").strip() or env.get('EMBEDDING_LOCAL_MODEL_PATH', 'data/models/embedding')
         env['EMBEDDING_LOCAL_DIM'] = input(f"向量维度 [{env.get('EMBEDDING_LOCAL_DIM', '2560')}]: ").strip() or env.get('EMBEDDING_LOCAL_DIM', '2560')
 
     save_env(env)
@@ -222,6 +222,7 @@ def update_rerank_config(env: dict):
         elif mode_choice == "2":
             env['RERANK_MODE'] = 'local'
             env['RERANK_LOCAL_URL'] = input(f"本地服务 URL [{env.get('RERANK_LOCAL_URL', 'http://127.0.0.1:5001')}]: ").strip() or env.get('RERANK_LOCAL_URL', 'http://127.0.0.1:5001')
+            env['RERANK_LOCAL_MODEL_PATH'] = input(f"本地模型路径 [{env.get('RERANK_LOCAL_MODEL_PATH', 'data/models/rerank')}]: ").strip() or env.get('RERANK_LOCAL_MODEL_PATH', 'data/models/rerank')
 
     save_env(env)
     print("\n✓ Rerank 配置已更新")
@@ -435,7 +436,7 @@ def reset_config():
             "EMBEDDING_CLOUD_MODEL": "BAAI/bge-m3",
             "EMBEDDING_CLOUD_DIM": "1024",
             "EMBEDDING_LOCAL_URL": "http://127.0.0.1:1234/v1/embeddings",
-            "EMBEDDING_LOCAL_MODEL": "text-embedding-qwen3-embedding-4b",
+            "EMBEDDING_LOCAL_MODEL_PATH": "data/models/embedding",
             "EMBEDDING_LOCAL_DIM": "2560",
             "RERANK_ENABLED": "true",
             "RERANK_MODE": "local",
@@ -443,6 +444,7 @@ def reset_config():
             "RERANK_CLOUD_API_KEY": "",
             "RERANK_CLOUD_MODEL": "rerank-multilingual-v3.0",
             "RERANK_LOCAL_URL": "http://127.0.0.1:5001",
+            "RERANK_LOCAL_MODEL_PATH": "data/models/rerank",
             "CHROMA_SERVER_HOST": "127.0.0.1",
             "CHROMA_SERVER_PORT": "9898",
             "MCP_SERVER_HOST": "127.0.0.1",
