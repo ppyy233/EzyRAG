@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — 知识库构建脚本 (Client-Server 模式)
+Ezy-RAG V0.0.17 — 知识库构建脚本 (Client-Server 模式)
 读取 data/docs/ 中的文档 → 中文友好切片 → 调用 Embedding 服务向量化 → 存入 ChromaDB Server
 
 支持：PDF / Word / TXT / 代码文件等 30+ 格式
@@ -23,7 +23,7 @@ import chromadb
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 
-from core.embedder import get_lm_proxy
+from core.scheduler import get_scheduler
 
 # 从配置文件读取
 DOCS_DIR = get_docs_dir()
@@ -463,11 +463,11 @@ def build_knowledge_base(collection_name: str = None, full_rebuild: bool = False
         return
     clean_old_shadows(chroma_client, collection_name)
 
-    # Step 2: 获取 Embedding 代理
-    print("\n[2/5] 初始化 Embedding 代理...")
+    # Step 2: 获取调度器
+    print("\n[2/5] 初始化调度器...")
     try:
-        emb_proxy = get_lm_proxy()
-        print(f"  代理就绪")
+        emb_proxy = get_scheduler()
+        print(f"  调度器就绪")
     except Exception as e:
         print(f"  无法连接 Embedding 服务: {e}")
         return

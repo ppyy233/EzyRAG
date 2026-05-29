@@ -93,19 +93,23 @@ def get_embedding_config() -> dict:
     mode = get_embedding_mode()
 
     if mode == "local":
+        dim_str = os.getenv("EMBEDDING_LOCAL_DIM", "")
+        dim = int(dim_str) if dim_str and dim_str.strip() else None
         return {
             "mode": "local",
             "url": os.getenv("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings"),
             "model": os.getenv("EMBEDDING_LOCAL_MODEL", "text-embedding-qwen3-embedding-4b"),
-            "dim": int(os.getenv("EMBEDDING_LOCAL_DIM", "2560")),
+            "dim": dim,
         }
     else:
+        dim_str = os.getenv("EMBEDDING_CLOUD_DIM", "")
+        dim = int(dim_str) if dim_str and dim_str.strip() else None
         return {
             "mode": "cloud",
             "provider": os.getenv("EMBEDDING_CLOUD_PROVIDER", "siliconflow"),
             "api_key": os.getenv("EMBEDDING_CLOUD_API_KEY", ""),
             "model": os.getenv("EMBEDDING_CLOUD_MODEL", "BAAI/bge-m3"),
-            "dim": int(os.getenv("EMBEDDING_CLOUD_DIM", "1024")),
+            "dim": dim,
             "url": os.getenv("EMBEDDING_CLOUD_URL", ""),
         }
 

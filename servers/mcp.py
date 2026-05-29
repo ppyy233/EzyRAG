@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.14 — MCP 服务器 (Client-Server 模式)
+Ezy-RAG V0.0.17 — MCP 服务器 (Client-Server 模式)
 通过 HTTP 暴露 search_knowledge_base 工具，供 opencode 等 MCP 客户端调用
 使用 AsyncHttpClient 连接 ChromaDB Server 实现异步查询
 
@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 import httpx
 
 import time as _time
-from core.embedder import get_lm_proxy
+from core.scheduler import get_scheduler
 
 # 从配置文件读取
 COLLECTION_NAME = get_collection_name()
@@ -142,9 +142,9 @@ async def check_lm_studio_cached():
 
 
 async def embed_query_async(query: str) -> list[float]:
-    """异步向量化——通过 Embedding 代理，VIP 优先级"""
-    proxy = get_lm_proxy()
-    vectors = await proxy.embed_async([query], priority=0)
+    """异步向量化——通过调度器，VIP 优先级"""
+    scheduler = get_scheduler()
+    vectors = await scheduler.embed_async([query], priority=0)
     return vectors[0]
 
 

@@ -98,8 +98,6 @@
   },
   "retrieval": {
     "k": 5,
-    "fetch_k": 15,
-    "lambda": 0.7,
-    "threshold": 0.3
+    "fetch_k": 15
   }
 }

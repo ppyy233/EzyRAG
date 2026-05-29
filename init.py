@@ -396,8 +396,6 @@ def update_retrieval_config(config: dict):
     print("\n当前检索参数配置：")
     print(f"  k={retrieval['k']}")
     print(f"  fetch_k={retrieval['fetch_k']}")
-    print(f"  lambda={retrieval['lambda']}")
-    print(f"  threshold={retrieval['threshold']}")
 
     print("\n输入新值（直接回车跳过）：")
     k = input(f"k [{retrieval['k']}]: ").strip()
@@ -407,14 +405,6 @@ def update_retrieval_config(config: dict):
     fetch_k = input(f"fetch_k [{retrieval['fetch_k']}]: ").strip()
     if fetch_k:
         retrieval['fetch_k'] = int(fetch_k)
-
-    lambda_val = input(f"lambda [{retrieval['lambda']}]: ").strip()
-    if lambda_val:
-        retrieval['lambda'] = float(lambda_val)
-
-    threshold = input(f"threshold [{retrieval['threshold']}]: ").strip()
-    if threshold:
-        retrieval['threshold'] = float(threshold)
 
     save_config(config)
     print("\n✓ 检索参数配置已更新")
@@ -509,9 +499,7 @@ def reset_config():
             },
             "retrieval": {
                 "k": 5,
-                "fetch_k": 15,
-                "lambda": 0.7,
-                "threshold": 0.3
+                "fetch_k": 15
             }
         }
         save_config(default_config)
