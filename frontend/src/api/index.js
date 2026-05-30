@@ -47,6 +47,7 @@ export const documentsApi = {
     const formData = new FormData()
     files.forEach(file => formData.append('files', file))
     return api.post('/documents/upload', formData, {
+      timeout: 300000,
       headers: { 'Content-Type': 'multipart/form-data' }
     })
   },

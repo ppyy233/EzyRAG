@@ -6,7 +6,9 @@ Ezy-RAG — 一键启动脚本
 功能:
   - 首次使用: 环境检查 → 安装依赖 → 交互配置 → 启动服务 → 打开浏览器
   - 日常启动: 检查环境 → 启动服务 → 打开浏览器
+  - 自动检测前端变化并重新构建
 """
+import os
 import sys
 import json
 import time
@@ -53,7 +55,6 @@ def print_info(message: str):
 
 
 def input_with_default(prompt: str, default: str = "") -> str:
-    """带默认值的输入，回车返回默认值"""
     if default:
         user_input = input(f"  {prompt} [{default}]: ").strip()
         return user_input if user_input else default
@@ -62,9 +63,7 @@ def input_with_default(prompt: str, default: str = "") -> str:
 
 
 def input_masked(prompt: str) -> str:
-    """密码输入，显示 masked"""
-    user_input = input(f"  {prompt}: ").strip()
-    return user_input
+    return input(f"  {prompt}: ").strip()
 
 
 # ============================================================
@@ -72,7 +71,6 @@ def input_masked(prompt: str) -> str:
 # ============================================================
 
 def check_port(host: str, port: int) -> bool:
-    """检查端口是否被占用"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
@@ -84,7 +82,6 @@ def check_port(host: str, port: int) -> bool:
 
 
 def check_python() -> tuple:
-    """检查 Python 版本"""
     version = sys.version_info
     if version.major < 3 or (version.major == 3 and version.minor < 11):
         return False, f"{version.major}.{version.minor}.{version.micro}"
@@ -92,7 +89,6 @@ def check_python() -> tuple:
 
 
 def check_uv() -> bool:
-    """检查 uv 是否安装"""
     try:
         result = subprocess.run(
             ["uv", "--version"],
@@ -104,7 +100,6 @@ def check_uv() -> bool:
 
 
 def check_node() -> bool:
-    """检查 Node.js 是否安装"""
     try:
         result = subprocess.run(
             ["node", "--version"],
@@ -116,22 +111,35 @@ def check_node() -> bool:
 
 
 def check_env() -> bool:
-    """检查 .env 是否存在"""
     return (ROOT / "config" / ".env").exists()
 
 
 def check_venv() -> bool:
-    """检查虚拟环境是否已创建"""
     return (ROOT / ".venv").exists()
 
 
 def check_frontend() -> bool:
-    """检查前端是否已构建"""
     return (ROOT / "frontend" / "dist" / "index.html").exists()
 
 
+def check_frontend_outdated() -> bool:
+    """检查前端源码是否比构建产物新，需要重新构建"""
+    src_dir = ROOT / "frontend" / "src"
+    dist_index = ROOT / "frontend" / "dist" / "index.html"
+
+    if not dist_index.exists():
+        return True
+
+    dist_time = dist_index.stat().st_mtime
+
+    for f in src_dir.rglob("*"):
+        if f.is_file() and f.stat().st_mtime > dist_time:
+            return True
+
+    return False
+
+
 def step_check_environment() -> bool:
-    """Step 1: 检查环境"""
     print_step("1", "检查环境")
 
     ok, ver = check_python()
@@ -161,7 +169,6 @@ def step_check_environment() -> bool:
 # ============================================================
 
 def install_python_deps() -> bool:
-    """安装 Python 依赖"""
     if check_venv():
         print_ok("Python 虚拟环境已存在")
         return True
@@ -180,11 +187,10 @@ def install_python_deps() -> bool:
 
 
 def install_frontend() -> bool:
-    """安装前端依赖并构建"""
     frontend_dir = ROOT / "frontend"
 
-    if check_frontend():
-        print_ok("前端已构建")
+    if check_frontend() and not check_frontend_outdated():
+        print_ok("前端已构建（无需更新）")
         return True
 
     if not check_node():
@@ -197,7 +203,7 @@ def install_frontend() -> bool:
         result = subprocess.run(
             ["npm", "install"],
             cwd=str(frontend_dir),
-            capture_output=True, text=True
+            capture_output=True, text=True, shell=True, encoding='utf-8'
         )
         if result.returncode != 0:
             print_error(f"安装前端依赖失败: {result.stderr}")
@@ -208,7 +214,7 @@ def install_frontend() -> bool:
     result = subprocess.run(
         ["npm", "run", "build"],
         cwd=str(frontend_dir),
-        capture_output=True, text=True
+        capture_output=True, text=True, shell=True, encoding='utf-8'
     )
     if result.returncode != 0:
         print_error(f"构建前端失败: {result.stderr}")
@@ -218,7 +224,6 @@ def install_frontend() -> bool:
 
 
 def step_install_dependencies() -> bool:
-    """Step 2: 安装依赖"""
     print_step("2", "安装依赖")
 
     if not install_python_deps():
@@ -235,7 +240,6 @@ def step_install_dependencies() -> bool:
 # ============================================================
 
 def read_port_from_env(key: str, default: int) -> int:
-    """从 .env 读取端口配置"""
     try:
         env_path = ROOT / "config" / ".env"
         if env_path.exists():
@@ -252,7 +256,6 @@ def read_port_from_env(key: str, default: int) -> int:
 
 
 def get_pid_on_port(port: int) -> str:
-    """获取占用端口的进程 PID"""
     try:
         result = subprocess.run(
             ["netstat", "-ano"],
@@ -267,7 +270,6 @@ def get_pid_on_port(port: int) -> str:
 
 
 def kill_process_on_port(port: int) -> bool:
-    """杀掉占用端口的进程"""
     pid = get_pid_on_port(port)
     if not pid:
         return False
@@ -283,11 +285,6 @@ def kill_process_on_port(port: int) -> bool:
 
 
 def handle_port_conflict(port: int, service_name: str) -> tuple:
-    """
-    处理端口冲突，返回 (success, port)
-    success: True=端口可用, False=用户放弃
-    port: 最终使用的端口号
-    """
     if not check_port("127.0.0.1", port):
         return True, port
 
@@ -309,7 +306,7 @@ def handle_port_conflict(port: int, service_name: str) -> tuple:
                 print_error(f"无法释放端口 {port}，请手动处理")
 
         elif choice == '2':
-            new_port_str = input(f"  输入新端口: ").strip()
+            new_port_str = input("  输入新端口: ").strip()
             if new_port_str.isdigit() and 1024 <= int(new_port_str) <= 65535:
                 new_port = int(new_port_str)
                 if check_port("127.0.0.1", new_port):
@@ -333,7 +330,6 @@ def handle_port_conflict(port: int, service_name: str) -> tuple:
 # ============================================================
 
 def step_interactive_config() -> bool:
-    """Step 3: 交互配置（仅 .env 不存在时）"""
     print_step("3", "配置")
 
     if check_env():
@@ -347,7 +343,6 @@ def step_interactive_config() -> bool:
     print_info("▸ 服务端口")
     print_info("─" * 40)
 
-    # ChromaDB 端口
     chroma_port_str = input_with_default("ChromaDB 端口", "9898")
     if not chroma_port_str.isdigit() or not (1024 <= int(chroma_port_str) <= 65535):
         print_error("无效端口，使用默认值 9898")
@@ -359,7 +354,6 @@ def step_interactive_config() -> bool:
     env['CHROMA_SERVER_HOST'] = '127.0.0.1'
     env['CHROMA_SERVER_PORT'] = str(chroma_port)
 
-    # Web API 端口
     web_port_str = input_with_default("Web API 端口", "9767")
     if not web_port_str.isdigit() or not (1024 <= int(web_port_str) <= 65535):
         print_error("无效端口，使用默认值 9767")
@@ -369,7 +363,6 @@ def step_interactive_config() -> bool:
         print_warn("跳过 Web API 端口配置")
         web_port = 9767
 
-    # MCP 端口（固定 9766，不询问）
     env['MCP_SERVER_HOST'] = '127.0.0.1'
     env['MCP_SERVER_PORT'] = '9766'
 
@@ -500,7 +493,7 @@ def step_interactive_config() -> bool:
 
     print_ok("已写入 config/.env")
 
-    # --- 创建 config.json（如不存在）---
+    # --- 创建 config.json ---
     config_path = config_dir / "config.json"
     if not config_path.exists():
         config = {
@@ -554,8 +547,7 @@ def step_interactive_config() -> bool:
 #  启动服务
 # ============================================================
 
-def start_service(module: str, port: int, name: str) -> subprocess.Popen | None:
-    """启动单个服务，返回进程对象"""
+def start_service(module: str, port: int, name: str):
     if check_port("127.0.0.1", port):
         print_ok(f"{name} 已在运行 (端口 {port})")
         return None
@@ -578,11 +570,9 @@ def start_service(module: str, port: int, name: str) -> subprocess.Popen | None:
     return None
 
 
-def step_start_services() -> tuple:
-    """Step 4: 启动服务，返回 (chroma_process, web_process)"""
+def step_start_services():
     print_step("4", "启动服务")
 
-    # 读取端口配置
     chroma_port = read_port_from_env('CHROMA_SERVER_PORT', 9898)
 
     chroma_process = start_service("servers.chroma", chroma_port, "ChromaDB")
@@ -596,7 +586,6 @@ def step_start_services() -> tuple:
 # ============================================================
 
 def step_open_browser():
-    """Step 5: 打开浏览器"""
     print_step("5", "打开浏览器")
 
     url = "http://127.0.0.1:9767"
@@ -620,13 +609,14 @@ def main():
     if not step_check_environment():
         return
 
-    # Step 2: 安装依赖（仅首次）
-    if not check_venv() or not check_frontend():
+    # Step 2: 安装依赖
+    need_install = not check_venv() or not check_frontend() or check_frontend_outdated()
+    if need_install:
         if not step_install_dependencies():
             return
     else:
         print_step("2", "依赖")
-        print_ok("所有依赖已安装")
+        print_ok("所有依赖已安装（无需更新）")
 
     # Step 3: 配置（仅 .env 不存在时）
     if not step_interactive_config():

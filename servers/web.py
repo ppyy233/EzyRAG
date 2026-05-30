@@ -234,13 +234,8 @@ def connect_chroma():
                 collection = client.get_collection(name=collection_name)
     except:
         # 从配置获取 HNSW 参数
-        hnsw_config = get_hnsw_config()
-        metadata = {
-            "hnsw:space": hnsw_config["space"],
-            "hnsw:sync_threshold": hnsw_config["sync_threshold"],
-            "hnsw:ef_construction": hnsw_config["ef_construction"],
-            "hnsw:M": hnsw_config["M"],
-        }
+        from config.settings import get_chroma_hnsw_metadata
+        metadata = get_chroma_hnsw_metadata()
         collection = client.get_or_create_collection(
             name=collection_name,
             metadata=metadata
@@ -703,7 +698,8 @@ async def upload_documents(files: List[UploadFile] = File(...)):
         
         uploaded = []
         for file in files:
-            file_path = docs_dir / file.filename
+            safe_name = os.path.basename(file.filename)
+            file_path = docs_dir / safe_name
             content = await file.read()
             with open(file_path, "wb") as f:
                 f.write(content)

@@ -259,18 +259,42 @@ const dragleave = () => {
 
 const handleDrop = async (event) => {
   isDragover.value = false
-  const files = event.dataTransfer.files
-  if (!files || files.length === 0) return
-  
-  const filesToUpload = []
-  for (const file of files) {
-    // file.name 包含完整路径（如果是文件夹）
-    // file.webkitRelativePath 包含相对路径（如果是文件夹）
-    filesToUpload.push(file)
+  const files = []
+  const seen = new Set()
+
+  const items = event.dataTransfer.items
+  if (items) {
+    for (const item of items) {
+      const entry = item.webkitGetAsEntry?.()
+      if (entry) {
+        await readEntry(entry, files, seen)
+      }
+    }
+  } else {
+    for (const file of event.dataTransfer.files) {
+      files.push(file)
+    }
   }
-  
-  if (filesToUpload.length > 0) {
-    await uploadFiles(filesToUpload)
+
+  if (files.length > 0) {
+    await uploadFiles(files)
+  }
+}
+
+const readEntry = async (entry, files, seen) => {
+  if (entry.isFile) {
+    const file = await new Promise(resolve => entry.file(resolve))
+    const key = `${file.name}_${file.size}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      files.push(file)
+    }
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader()
+    const entries = await new Promise(resolve => reader.readEntries(resolve))
+    for (const e of entries) {
+      await readEntry(e, files, seen)
+    }
   }
 }
 
