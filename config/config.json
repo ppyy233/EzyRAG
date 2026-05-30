@@ -5,6 +5,9 @@
   "docs": {
     "dir": "data/docs"
   },
+  "web": {
+    "dir": "data/web"
+  },
   "chroma": {
     "dir": "data/chroma_db"
   },
@@ -93,10 +96,16 @@
     },
     "default_template": "academic"
   },
+  "hnsw": {
+    "space": "cosine",
+    "ef_construction": 100,
+    "ef_search": 100,
+    "max_neighbors": 16,
+    "sync_threshold": 1000,
+    "batch_size": 100
+  },
   "retrieval": {
     "k": 5,
-    "fetch_k": 15,
-    "lambda": 0.7,
-    "threshold": 0.3
+    "fetch_k": 15
   }
 }

@@ -7,10 +7,13 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
 
 # IDE
 .idea/
+.vscode/
+*.swp
+*.swo
 
 # Logs
 *.log
@@ -18,6 +21,8 @@ wheels/
 # Data (ignore all except placeholder)
 data/docs/*
 !data/docs/.gitkeep
+data/web/*
+!data/web/.gitkeep
 data/chroma_db/*
 !data/chroma_db/.gitkeep
 data/models/*
@@ -29,11 +34,26 @@ config/.env
 
 # Runtime generated files
 runtime/logs/*
-!runtime/logs/.gitkeep
 runtime/state/*
+!runtime/logs/.gitkeep
 !runtime/state/.gitkeep
+
+# Downloaded model files
+models/
 
 # Backup files
 *.backup
+*.bak
 
-frontend/node_modules/
+# Test reports
+tests/*.json
+!tests/.gitkeep
+
+# uv lock file (optional, uncomment if not needed)
+# uv.lock
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+frontend

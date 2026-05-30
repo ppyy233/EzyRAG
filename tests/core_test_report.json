@@ -1,0 +1,133 @@
+{
+  "start_time": "2026-05-29T15:16:40.052409",
+  "total": 25,
+  "passed": 25,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Priority queue order",
+      "passed": true,
+      "details": "expected=[0, 0, 50, 100, 100], got=[0, 0, 50, 100, 100]"
+    },
+    {
+      "name": "Query before build",
+      "passed": true,
+      "details": "execution_order=[0, 100]"
+    },
+    {
+      "name": "Query result exists",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Build result exists",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "All queries completed",
+      "passed": true,
+      "details": "completed=5, expected=5"
+    },
+    {
+      "name": "All results valid",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Add document",
+      "passed": true,
+      "details": "chunks=1"
+    },
+    {
+      "name": "Update document (shadow strategy)",
+      "passed": true,
+      "details": "chunks=1"
+    },
+    {
+      "name": "Document exists after update",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Document info available",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Old data preserved on failure",
+      "passed": true,
+      "details": "Document should still exist with old content"
+    },
+    {
+      "name": "Old data preserved on copy failure",
+      "passed": true,
+      "details": "Document should still exist with old content"
+    },
+    {
+      "name": "Shadow collection cleaned up",
+      "passed": true,
+      "details": "Found 0 shadow collections"
+    },
+    {
+      "name": "Initial state: doc_a added",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Sync stats: added",
+      "passed": true,
+      "details": "added=1"
+    },
+    {
+      "name": "Sync stats: updated",
+      "passed": true,
+      "details": "updated=1"
+    },
+    {
+      "name": "doc_a exists after sync",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "doc_b exists after sync",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "doc_a preserved on failure",
+      "passed": true,
+      "details": "Document A should still exist with old content"
+    },
+    {
+      "name": "doc_b preserved on failure",
+      "passed": true,
+      "details": "Document B should still exist with old content"
+    },
+    {
+      "name": "cleanup_duplicates method exists",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "cleanup_duplicates callable",
+      "passed": true,
+      "details": "cleaned=0"
+    },
+    {
+      "name": "Hash functions consistent",
+      "passed": true,
+      "details": "repo=6fa72320568f90357f4698aa8a37ab4e, builder=6fa72320568f90357f4698aa8a37ab4e"
+    },
+    {
+      "name": "Same content same hash",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Different content different hash",
+      "passed": true,
+      "details": ""
+    }
+  ]
+}

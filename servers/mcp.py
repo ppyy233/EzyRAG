@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V1.0.0 — MCP 服务器 (Client-Server 模式)
-通过 HTTP 暴露 search_knowledge_base 工具，供 opencode 等 MCP 客户端调用
-使用 AsyncHttpClient 连接 ChromaDB Server 实现异步查询
+Ezy-RAG — MCP 服务器
+通过 HTTP 暴露 search_knowledge_base 工具，供 opencode 或 MCP 客户端调用
 
 用法: python -m servers.mcp
 """
 import os
 import sys
-import json
-import asyncio
+import time
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -18,28 +16,27 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from config.settings import get_collection_name, get_retrieval_config
+from config.pointer import get_active_collection
 import chromadb
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-import httpx
 
-import time as _time
-from core.embedder import get_lm_proxy
-from core.reranker import rerank_async
-
-# 从配置文件读取
+# 配置
 COLLECTION_NAME = get_collection_name()
 RETRIEVAL_CONFIG = get_retrieval_config()
 RETRIEVAL_K = RETRIEVAL_CONFIG["k"]
 RETRIEVAL_FETCH_K = RETRIEVAL_CONFIG["fetch_k"]
 
+# 日志
+LOG_DIR = ROOT / "runtime" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         RotatingFileHandler(
-            str(ROOT / "runtime" / "logs" / "mcp_server.log"),
+            str(LOG_DIR / "mcp_server.log"),
             maxBytes=5 * 1024 * 1024,
             backupCount=3,
             encoding="utf-8",
@@ -50,43 +47,64 @@ logger = logging.getLogger("Ezy-RAG-MCP")
 
 app = FastAPI(title="Ezy-RAG MCP Server", version="1.0.0")
 
-_oai_client = None
+# 全局实例（启动时初始化）
+_emb_api = None
+_rerank_api = None
+_scheduler = None
 _chroma_client = None
 _chroma_collection = None
-
-POINTER_FILE = ROOT / "runtime" / "state" / "collection_pointer.json"
 _active_collection_name = None
+_env_mtime = 0.0
+_env_file = ROOT / "config" / ".env"
 
 
-def get_active_collection_name() -> str:
-    """读取指针文件中的活跃集合名"""
-    if POINTER_FILE.exists():
-        with open(POINTER_FILE, "r", encoding="utf-8") as fp:
-            data = json.load(fp)
-            return data.get(COLLECTION_NAME, COLLECTION_NAME)
-    return COLLECTION_NAME
+def _init_services():
+    """初始化所有服�?""
+    global _emb_api, _rerank_api, _scheduler, _env_mtime
+    from core.api import EmbeddingAPI, RerankAPI
+    from core.scheduler import get_scheduler
+
+    _emb_api = EmbeddingAPI()
+    _rerank_api = RerankAPI()
+    _rerank_api.set_k(RETRIEVAL_K)
+    _scheduler = get_scheduler()
+    _env_mtime = _env_file.stat().st_mtime if _env_file.exists() else 0.0
 
 
-async def get_chroma_client():
-    global _chroma_client
-    if _chroma_client is None:
-        _chroma_client = await chromadb.AsyncHttpClient(
-            host=os.getenv("CHROMA_SERVER_HOST", "127.0.0.1"),
-            port=int(os.getenv("CHROMA_SERVER_PORT", "9898")),
-        )
-    return _chroma_client
+def _check_config_reload():
+    """检�?.env 是否变化，如果变了就重新加载"""
+    global _emb_api, _rerank_api, _scheduler, _env_mtime
+    if not _env_file.exists():
+        return
+    current_mtime = _env_file.stat().st_mtime
+    if current_mtime != _env_mtime:
+        logger.info("检测到 .env 变化，重新加载配�?..")
+        from dotenv import load_dotenv
+        load_dotenv(_env_file, override=True)
+        from core.api import EmbeddingAPI, RerankAPI
+        _emb_api = EmbeddingAPI()
+        _rerank_api = RerankAPI()
+        _rerank_api.set_k(RETRIEVAL_K)
+        _env_mtime = current_mtime
+        logger.info("配置重新加载完成")
 
 
-async def get_collection_async():
-    global _chroma_collection, _active_collection_name
-    current = get_active_collection_name()
+async def _get_collection():
+    """获取当前活跃集合"""
+    global _chroma_client, _chroma_collection, _active_collection_name
+
+    current = get_active_collection(COLLECTION_NAME)
     if _chroma_collection is None or current != _active_collection_name:
-        client = await get_chroma_client()
+        if _chroma_client is None:
+            _chroma_client = await chromadb.AsyncHttpClient(
+                host=os.getenv("CHROMA_SERVER_HOST") or "127.0.0.1",
+                port=int(os.getenv("CHROMA_SERVER_PORT") or "9898"),
+            )
         try:
-            _chroma_collection = await client.get_collection(name=current)
+            _chroma_collection = await _chroma_client.get_collection(name=current)
         except Exception:
-            logger.warning(f"指针集合 {current} 不存在，回退到 {COLLECTION_NAME}")
-            _chroma_collection = await client.get_or_create_collection(
+            logger.warning(f"集合 {current} 不存在，回退�?{COLLECTION_NAME}")
+            _chroma_collection = await _chroma_client.get_or_create_collection(
                 name=COLLECTION_NAME,
                 metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100},
             )
@@ -96,97 +114,79 @@ async def get_collection_async():
     return _chroma_collection
 
 
-async def check_lm_studio_health() -> tuple[bool, str]:
-    base_url = os.getenv("EMBEDDING_API_URL", "http://127.0.0.1:5000/v1/embeddings").rsplit("/v1/", 1)[0]
-    try:
-        async with httpx.AsyncClient(timeout=3) as c:
-            r = await c.get(f"{base_url}/v1/models", headers={
-                "Authorization": f"Bearer {os.getenv('EMBEDDING_API_KEY', '')}"
-            })
-            if r.status_code == 200:
-                return True, ""
-            return False, f"Embedding 服务返回状态码 {r.status_code}"
-    except Exception as e:
-        return False, f"Embedding 服务未启动或不可访问: {e}"
-
-
-_health_cache = {"ok": False, "err": "", "last_check": 0.0}
-_health_lock = asyncio.Lock()
-
-
-async def check_lm_studio_cached():
-    now = _time.time()
-    if now - _health_cache["last_check"] < 30:
-        return _health_cache["ok"], _health_cache["err"]
-    async with _health_lock:
-        if now - _health_cache["last_check"] < 30:
-            return _health_cache["ok"], _health_cache["err"]
-        _health_cache["ok"], _health_cache["err"] = await check_lm_studio_health()
-        _health_cache["last_check"] = _time.time()
-        return _health_cache["ok"], _health_cache["err"]
-
-
-async def embed_query_async(query: str) -> list[float]:
-    """异步向量化——通过 Embedding 代理，VIP 优先级"""
-    proxy = get_lm_proxy()
-    vectors = await proxy.embed_async([query], priority=0)
-    return vectors[0]
-
-
 async def search_async(query: str) -> str:
-    ok, err = await check_lm_studio_cached()
+    """搜索知识�?""
+    t0 = time.time()
+    _check_config_reload()
+    # 健康检�?
+    ok, err = _emb_api.health_check()
     if not ok:
-        return f"[错误] {err}\n请启动 Embedding 服务后重试。"
+        return f"[错误] Embedding 服务不可�? {err}\n请启动服务后重试�?
 
     try:
-        query_vec = await embed_query_async(query)
-        collection = await get_collection_async()
+        # 向量化查�?
+        vectors = await _scheduler.embed_async([query], priority=0)
+        query_vec = vectors[0]
 
-        do_rerank = os.getenv("RERANK_ENABLED", "false").lower() == "true"
+        # 查询 ChromaDB
+        collection = await _get_collection()
+        do_rerank = _rerank_api.get_info()["enabled"]
         fetch_k = RETRIEVAL_FETCH_K if do_rerank else RETRIEVAL_K
 
         results = await collection.query(
-            query_embeddings=query_vec,
+            query_embeddings=[query_vec],
             n_results=fetch_k,
             include=["documents", "metadatas", "distances"],
         )
 
         if not results or not results["ids"] or not results["ids"][0]:
-            return "知识库中未找到相关内容。"
+            return "知识库中未找到相关内容�?
 
         ids = results["ids"][0]
         docs = results["documents"][0]
         metas = results["metadatas"][0]
         dists = results["distances"][0]
 
-        if do_rerank and len(docs) > RETRIEVAL_K:
+        # Rerank
+        rerank_executed = False
+        rerank_scores = []
+
+        if do_rerank and len(docs) > 1:
             try:
-                scores = await rerank_async(query, docs)
-                ranked = sorted(zip(range(len(docs)), scores), key=lambda x: x[1], reverse=True)
-                top_indices = [i for i, _ in ranked[:RETRIEVAL_K]]
-                ids = [ids[i] for i in top_indices]
-                docs = [docs[i] for i in top_indices]
-                metas = [metas[i] for i in top_indices]
-                dists = [dists[i] for i in top_indices]
-                logger.info(f"重排完成，取 top-{RETRIEVAL_K}")
+                scores, indices = await _rerank_api.rerank_async(query, docs)
+                rerank_executed = True
+                rerank_scores = scores
+                ids = [ids[i] for i in indices]
+                docs = [docs[i] for i in indices]
+                metas = [metas[i] for i in indices]
+                dists = [dists[i] for i in indices]
             except Exception as e:
-                logger.warning(f"重排失败，使用原始结果: {e}")
+                logger.warning(f"Rerank 失败: {e}")
                 docs = docs[:RETRIEVAL_K]
                 metas = metas[:RETRIEVAL_K]
                 dists = dists[:RETRIEVAL_K]
                 ids = ids[:RETRIEVAL_K]
+        else:
+            docs = docs[:RETRIEVAL_K]
+            metas = metas[:RETRIEVAL_K]
+            dists = dists[:RETRIEVAL_K]
+            ids = ids[:RETRIEVAL_K]
 
-        parts = [f"找到 {len(docs)} 条相关文档:\n"]
-        if do_rerank:
-            parts = [f"找到 {len(docs)} 条相关文档（已通过重排优化）:\n"]
-        for i, (doc_id, doc_text, meta, dist) in enumerate(zip(
-            ids, docs, metas, dists
-        ), 1):
+        # 格式化结�?
+        if rerank_executed:
+            score_str = ", ".join([f"{s:.2f}" for s in rerank_scores])
+            parts = [f"找到 {len(docs)} 条相关文档（已重�?| 分数: {score_str}�?\n"]
+        else:
+            parts = [f"找到 {len(docs)} 条相关文�?\n"]
+
+        for i, (doc_id, doc_text, meta, dist) in enumerate(zip(ids, docs, metas, dists), 1):
             source = meta.get("source", "未知来源")
             fname = os.path.basename(source)
             similarity = max(0, 1 - dist)
-            part = f"[{i}] 来源: {fname} | 相似度: {similarity:.2%}\n{doc_text.strip()}"
+            part = f"[{i}] 来源: {fname} | 相似�? {similarity:.2%}\n{doc_text.strip()}"
             parts.append(part)
+        elapsed = time.time() - t0
+        logger.info(f"search: '{query[:50]}' �?{len(docs)} results, rerank={rerank_executed}, {elapsed:.2f}s")
         return "\n\n".join(parts)
 
     except Exception as e:
@@ -195,23 +195,30 @@ async def search_async(query: str) -> str:
 
 
 # ============================================================
-# MCP 协议端点
+#  MCP 协议端点
 # ============================================================
 
 @app.get("/health")
 async def health_check():
-    ok, err = await check_lm_studio_health()
+    """健康检�?""
+    _check_config_reload()
+    emb_ok, emb_err = _emb_api.health_check() if _emb_api else (False, "未初始化")
+    rerank_ok, rerank_err = _rerank_api.health_check() if _rerank_api else (False, "未初始化")
+
     try:
-        coll = await get_collection_async()
+        coll = await _get_collection()
         db_count = await coll.count()
     except Exception:
         db_count = 0
+
     return {
         "status": "ok",
-        "embedding_service": {"online": ok, "error": err},
+        "version": "1.0.0",
+        "embedding": {"online": emb_ok, "error": emb_err, "info": _emb_api.get_info() if _emb_api else {}},
+        "rerank": {"online": rerank_ok, "error": rerank_err, "info": _rerank_api.get_info() if _rerank_api else {}},
         "chromadb": {
             "server": f"{os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}",
-            "collection": get_active_collection_name(),
+            "collection": get_active_collection(COLLECTION_NAME),
             "documents": db_count,
         },
     }
@@ -219,6 +226,7 @@ async def health_check():
 
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
+    """MCP JSON-RPC 端点"""
     try:
         body = await request.json()
     except Exception:
@@ -234,13 +242,13 @@ async def mcp_endpoint(request: Request):
             "result": {
                 "tools": [{
                     "name": "search_knowledge_base",
-                    "description": "【优先调用】遇到以下情况应优先使用此工具搜索本地知识库：① 用户询问的信息可能属于个人私有数据或特定工作环境；② 问题涉及你训练数据中可能不存在的特定人物、地点或事件；③ 你对答案不确定，需要从本地文档中查找事实依据。调用此工具来检索本地知识库中的文档信息。",
+                    "description": "【优先调用】遇到以下情况应优先使用此工具搜索本地知识库：① 用户询问的信息可能属于个人私有数据或特定工作环境；② 问题涉及你训练数据中可能不存在的特定人物、地点或事件；③ 你对答案不确定，需要从本地文档中查找事实依据。调用此工具来检索本地知识库中的文档信息�?,
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "要搜索的问题或关键词，使用中文或英文均可。"
+                                "description": "要搜索的问题或关键词，使用中文或英文均可�?
                             }
                         },
                         "required": ["query"]
@@ -300,31 +308,24 @@ async def mcp_endpoint(request: Request):
 
 
 def main():
-    logger.info("Ezy-RAG MCP Server V1.0.0 启动中...")
-    logger.info(f"Embedding 服务: {os.getenv('EMBEDDING_API_URL', 'http://127.0.0.1:5000/v1/embeddings')}")
-    logger.info(f"ChromaDB Server: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
+    """启动 MCP 服务�?""
+    _init_services()
+
+    emb_info = _emb_api.get_info()
+    rerank_info = _rerank_api.get_info()
+
+    logger.info("=" * 50)
+    logger.info("Ezy-RAG MCP Server V1.0.0 启动�?..")
+    logger.info(f"Embedding: {emb_info['mode']} ({emb_info['model']}, {emb_info['dim']}�?")
+    logger.info(f"Rerank: {'启用' if rerank_info['enabled'] else '未启�?} ({rerank_info['mode']})")
+    logger.info(f"ChromaDB: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
     logger.info(f"监听: http://{os.getenv('MCP_SERVER_HOST', '127.0.0.1')}:{os.getenv('MCP_SERVER_PORT', '9766')}")
-
-    async def startup_checks():
-        ok, err = await check_lm_studio_health()
-        if ok:
-            logger.info("Embedding 服务: 在线")
-        else:
-            logger.warning(f"Embedding 服务: {err}")
-
-        try:
-            client = await get_chroma_client()
-            await client.heartbeat()
-            logger.info("ChromaDB Server: 在线")
-        except Exception as e:
-            logger.warning(f"ChromaDB Server 不可用: {e}")
-
-    asyncio.run(startup_checks())
+    logger.info("=" * 50)
 
     uvicorn.run(
         app,
-        host=os.getenv("MCP_SERVER_HOST", "127.0.0.1"),
-        port=int(os.getenv("MCP_SERVER_PORT", "9766")),
+        host=os.getenv("MCP_SERVER_HOST") or "127.0.0.1",
+        port=int(os.getenv("MCP_SERVER_PORT") or "9766"),
         log_level="info",
     )
 
