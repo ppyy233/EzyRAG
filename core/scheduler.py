@@ -1,18 +1,15 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.18 — 统一任务调度器
-支持 Embedding 的优先级队列调度，确保建库和查询请求互不阻塞
+Ezy-RAG 鈥?缁熶竴浠诲姟璋冨害鍣?鏀寔 Embedding 鐨勪紭鍏堢骇闃熷垪璋冨害锛岀‘淇濆缓搴撳拰鏌ヨ璇锋眰浜掍笉闃诲
 
-功能：
-  - 优先级队列：priority=0 (VIP查询) / priority=100 (建库)
-  - 委托 core.api.EmbeddingAPI 执行实际向量化
-
-用法:
+鍔熻兘锛?  - 浼樺厛绾ч槦鍒楋細priority=0 (VIP鏌ヨ) / priority=100 (寤哄簱)
+  - 濮旀墭 core.api.EmbeddingAPI 鎵ц瀹為檯鍚戦噺鍖?
+鐢ㄦ硶:
   from core.scheduler import get_scheduler
 
   scheduler = get_scheduler()
-  embeddings = scheduler.embed_sync(["文本1", "文本2"], priority=100)
-  vec = await scheduler.embed_async(["查询文本"], priority=0)
+  embeddings = scheduler.embed_sync(["鏂囨湰1", "鏂囨湰2"], priority=100)
+  vec = await scheduler.embed_async(["鏌ヨ鏂囨湰"], priority=0)
 """
 import sys
 import threading
@@ -32,7 +29,7 @@ _global_lock = threading.Lock()
 
 
 class TaskScheduler:
-    """优先级队列调度器，委托 EmbeddingAPI 执行向量化"""
+    """浼樺厛绾ч槦鍒楄皟搴﹀櫒锛屽鎵?EmbeddingAPI 鎵ц鍚戦噺鍖?""
 
     def __init__(self, emb_api):
         self._api = emb_api
@@ -42,7 +39,7 @@ class TaskScheduler:
         self._running = False
         self._thread = None
         self.start()
-        logger.info(f"调度器已启动 (model={emb_api.get_info()['model']})")
+        logger.info(f"璋冨害鍣ㄥ凡鍚姩 (model={emb_api.get_info()['model']})")
 
     def start(self):
         if self._running:
@@ -71,12 +68,12 @@ class TaskScheduler:
                 event.set()
 
     def embed_sync(self, texts, priority=100, timeout=300):
-        """同步 embedding"""
+        """鍚屾 embedding"""
         task_id = uuid.uuid4().hex
         event = threading.Event()
         self._queue.put((priority, task_id, texts, event))
         if not event.wait(timeout=timeout):
-            raise TimeoutError(f"Embedding 服务超时 ({timeout}s)")
+            raise TimeoutError(f"Embedding 鏈嶅姟瓒呮椂 ({timeout}s)")
         with self._results_lock:
             result = self._results.pop(task_id, None)
         if isinstance(result, Exception):
@@ -84,12 +81,12 @@ class TaskScheduler:
         return result
 
     async def embed_async(self, texts, priority=0, timeout=60):
-        """异步 embedding"""
+        """寮傛 embedding"""
         return await asyncio.to_thread(self.embed_sync, texts, priority=priority, timeout=timeout)
 
 
 def get_scheduler():
-    """获取全局单例调度器"""
+    """鑾峰彇鍏ㄥ眬鍗曚緥璋冨害鍣?""
     global _global_scheduler
     if _global_scheduler is not None:
         return _global_scheduler

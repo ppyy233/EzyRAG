@@ -1,620 +1,644 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.18 — 数据库管理工具
-用法: python cli/db_manage.py [command]
-
-命令：
-  list              显示文档映射表
-  status            显示数据库状态
-  add [--all]       添加文档
-  delete [--all]    删除向量记录
-  update [--all]    更新文档
-  sync              同步本地和向量库
-  rebuild           全量重建
-  clean             清理孤立记录
-"""
-import sys
+Ezy-RAG 鈥?鏂囨。绠＄悊
+鍙傝€冨墠绔璁＄殑绠€娲佹枃妗ｇ鐞嗙晫闈?"""
 import os
+import sys
 import time
-import argparse
 from pathlib import Path
-
-if sys.platform == "win32":
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+from datetime import datetime
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
-load_dotenv(ROOT / "config" / ".env")
-
-import chromadb
-from config.settings import get_chunk_config, get_collection_name
-from config.pointer import get_active_collection, set_active_collection
-from core.api import EmbeddingAPI
-from core.database import DocumentDatabase, read_file, load_all_documents, SUPPORTED_EXT, validate_hnsw, cleanup_empty_chroma_dirs, cleanup_orphan_shadows
-
-
-# ============================================================
-#  连接辅助
-# ============================================================
-
-def connect_chroma():
-    """统一的 ChromaDB 连接，返回 (client, db)"""
-    host = os.getenv("CHROMA_SERVER_HOST", "127.0.0.1")
-    port = int(os.getenv("CHROMA_SERVER_PORT", "9898"))
-
-    try:
-        client = chromadb.HttpClient(host=host, port=port)
-        client.heartbeat()
-    except Exception as e:
-        raise ConnectionError(f"无法连接 ChromaDB ({host}:{port}): {e or '连接被拒绝'}")
-
-    try:
-        emb_api = EmbeddingAPI()
-    except Exception as e:
-        raise ConnectionError(f"Embedding 服务初始化失败: {e or '请检查 .env 配置'}")
-
-    # 启动清理
-    cleanup_empty_chroma_dirs()
-    cleanup_orphan_shadows(client, get_collection_name())
-
-    collection_name = get_active_collection(get_collection_name())
-
-    try:
-        collection = client.get_collection(name=collection_name)
-        # 验证 HNSW 完整性
-        ok, detail = validate_hnsw(collection)
-        if not ok:
-            print(f"  [!] 集合 {collection_name} {detail}，自动重建...")
-            client.delete_collection(collection_name)
-            collection = client.get_or_create_collection(
-                name=collection_name,
-                metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100},
-            )
-    except Exception:
-        collection = client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100},
-        )
-        set_active_collection(get_collection_name(), collection_name)
-
-    db = DocumentDatabase(collection, emb_api, client, collection_name)
-    return client, db
+from cli.ui import (
+    header, info_card, table, menu, confirm, 
+    log_ok, log_error, log_info, log_warn, log_step, progress_bar,
+    select_data_source
+)
+from cli.cli_core import (
+    connect_chroma, get_local_documents, get_database_stats, 
+    get_document_list, reload_env
+)
 
 
-def get_local_documents() -> list:
-    """获取本地文档列表"""
+def find_doc_in_docs(filename: str) -> str | None:
+    """鍦?docs 鐩綍涓煡鎵炬枃妗ｏ紝杩斿洖瀹屾暣璺緞"""
     docs_dir = ROOT / "data" / "docs"
     if not docs_dir.exists():
-        return []
-    documents = []
-    seen = set()
-    for ext in SUPPORTED_EXT:
-        for f in docs_dir.glob(f"**/*{ext}"):
-            if f.is_file():
-                key = str(f.resolve())
-                if key not in seen:
-                    seen.add(key)
-                    documents.append(str(f))
-    return sorted(documents)
+        return None
+    
+    # 绮剧‘鍖归厤
+    for f in docs_dir.rglob("*"):
+        if f.is_file() and f.name == filename:
+            return str(f)
+    
+    # 妯＄硦鍖归厤锛堝寘鍚叧閿瘝锛?    matches = []
+    for f in docs_dir.rglob("*"):
+        if f.is_file() and filename.lower() in f.name.lower():
+            matches.append(str(f))
+    
+    if len(matches) == 1:
+        return matches[0]
+    elif len(matches) > 1:
+        log_info(f"鎵惧埌澶氫釜鍖归厤: {[Path(m).name for m in matches]}")
+        return matches[0]
+    
+    return None
 
 
-# ============================================================
-#  命令实现
-# ============================================================
-
-def show_status():
-    """显示数据库状态"""
-    print("\n" + "=" * 60)
-    print("  数据库状态")
-    print("=" * 60)
-    try:
-        _, db = connect_chroma()
-        print(f"  集合: {db.collection_name}")
-        print(f"  总记录数: {db.count()}")
-        orphans = db.check_orphan_records(str(ROOT / "data" / "docs"))
-        if orphans:
-            print(f"  [!] 孤立记录: {len(orphans)} 个")
-            for doc in orphans:
-                print(f"      - {doc['source_name']}")
-    except Exception as e:
-        print(f"  连接失败: {e}")
-
-
-def list_documents():
-    """显示文档映射表"""
-    print("\n" + "=" * 60)
-    print("  文档映射表")
-    print("=" * 60)
-    try:
-        _, db = connect_chroma()
-    except Exception as e:
-        print(f"  连接失败: {e}")
+def show_document_list(source: str = "all"):
+    """鏄剧ず鏂囨。鍒楄〃"""
+    docs = get_document_list(source)
+    
+    if not docs:
+        log_info("娌℃湁鎵惧埌鏂囨。")
         return
-
-    local_docs = get_local_documents()
-    vector_docs = {d["source"]: d for d in db.list_documents()}
-    local_file_docs = {k: v for k, v in vector_docs.items() if v.get("source_type") == "local_file"}
-
-    print(f"\n  本地文件映射:")
-    print(f"  {'文件名':<40} {'状态':<10} {'chunks':<8}")
-    print(f"  {'-'*60}")
-    for doc in local_docs:
-        doc_name = Path(doc).name
-        if doc in local_file_docs:
-            chunks = local_file_docs[doc]["chunks"]
-            print(f"  {doc_name:<40} {'已添加':<10} {chunks:<8}")
-        else:
-            print(f"  {doc_name:<40} {'未添加':<10} {'-':<8}")
-
-    orphans = [doc for doc in local_file_docs.values() if not Path(doc["source"]).exists()]
-    if orphans:
-        print(f"\n  孤立记录（本地文件已删除）:")
-        for doc in orphans:
-            print(f"  {doc['source_name']:<40} {doc['chunks']:<8}")
-
-    web_docs = {k: v for k, v in vector_docs.items() if v.get("source_type") == "web_crawl"}
-    if web_docs:
-        print(f"\n  网页数据:")
-        for doc in web_docs.values():
-            url = doc["source"][:50] + "..." if len(doc["source"]) > 53 else doc["source"]
-            print(f"  {url:<55} {doc['chunks']:<8}")
-
-    total_chunks = sum(d["chunks"] for d in vector_docs.values())
-    print(f"\n  本地: {len(local_docs)} 个  向量库: {len(vector_docs)} 个  chunks: {total_chunks}")
+    
+    # 鍑嗗琛ㄦ牸鏁版嵁
+    headers = ["鏂囦欢鍚?, "鏉ユ簮", "鐘舵€?, "Chunks"]
+    rows = []
+    for doc in docs:
+        source_text = {"docs": "鏈湴", "web": "缃戦〉"}.get(doc.get("source", ""), "鏈煡")
+        status_text = {
+            "imported": "宸插鍏?,
+            "local": "鏈鍏?,
+            "orphan": "瀛ょ珛"
+        }.get(doc["status"], doc["status"])
+        
+        chunks_text = str(doc["chunks"]) if doc["chunks"] > 0 else "-"
+        rows.append([doc["name"], source_text, status_text, chunks_text])
+    
+    # 鏄剧ず缁熻
+    stats = get_database_stats()
+    info_card("鏂囨。缁熻", {
+        "鏈湴鏂囨。": f"{stats['docs_count']} 涓?,
+        "缃戦〉鏁版嵁": f"{stats['web_count']} 涓?,
+        "宸插鍏?: f"{stats['vector_docs']} 涓?,
+        "鍚戦噺鍧?: f"{stats['chunks']} 涓?,
+    })
+    
+    # 鏄剧ず琛ㄦ牸
+    table(headers, rows)
 
 
-def add_documents(file_paths: list):
-    """添加指定文件"""
-    print(f"\n  添加文档到向量库...")
+def add_document():
+    """娣诲姞鍗曚釜鏂囨。"""
+    from core.document import read_file
+    from config.settings import get_chunk_config
+    
+    filename = input("\n  璇疯緭鍏ユ枃妗ｅ悕绉? ").strip()
+    if not filename:
+        log_info("宸插彇娑?)
+        return
+    
+    # 鏌ユ壘鏂囨。
+    doc_path = find_doc_in_docs(filename)
+    if not doc_path:
+        log_error(f"鏈壘鍒版枃妗? {filename}")
+        return
+    
+    log_step(f"娣诲姞鏂囨。: {Path(doc_path).name}")
+    
     try:
         _, db = connect_chroma()
+        chunk_cfg = get_chunk_config()
+        
+        text = read_file(doc_path)
+        if not text or not text.strip():
+            log_error("鏂囨。鍐呭涓虹┖")
+            return
+        
+        doc_name = Path(doc_path).stem
+        text = f"[鏂囦欢鍚? {doc_name}]\n{text}"
+        doc = {"path": doc_path, "text": text}
+        
+        count = db.add(doc, chunk_cfg, source_type="local_file")
+        log_ok(f"娣诲姞鎴愬姛: {Path(doc_path).name} ({count} chunks)")
+        
     except Exception as e:
-        print(f"  连接失败: {e}")
-        return
+        log_error(f"娣诲姞澶辫触: {e}")
 
-    chunk_cfg = get_chunk_config()
-    total = 0
-    t_start = time.time()
-    n = len(file_paths)
-    for i, file_path in enumerate(file_paths, 1):
-        full_path = Path(file_path)
-        if not full_path.exists():
-            print(f"  [{i}/{n}] [FAIL] 文件不存在: {full_path.name}")
-            continue
-        ext = full_path.suffix.lower()
-        if ext not in SUPPORTED_EXT:
-            print(f"  [{i}/{n}] [SKIP] 不支持的格式: {full_path.name}")
-            continue
-        try:
-            t0 = time.time()
-            text = read_file(str(full_path))
-            if not text or not text.strip():
-                print(f"  [{i}/{n}] [SKIP] 内容为空: {full_path.name}")
+
+def add_documents_batch():
+    """鎵归噺娣诲姞鏂囨。"""
+    from core.document import read_file
+    from config.settings import get_chunk_config
+    
+    print("\n  璇疯緭鍏ユ枃妗ｅ悕绉帮紙澶氫釜鐢ㄧ┖鏍兼垨閫楀彿鍒嗛殧锛?")
+    input_str = input("  > ").strip()
+    if not input_str:
+        log_info("宸插彇娑?)
+        return
+    
+    # 瑙ｆ瀽鏂囦欢鍚嶅垪琛?    names = []
+    for sep in [",", " ", "\t"]:
+        names = [n.strip() for n in input_str.split(sep) if n.strip()]
+        if names:
+            break
+    
+    if not names:
+        log_info("鏈緭鍏ユ湁鏁堢殑鏂囨。鍚嶇О")
+        return
+    
+    log_step(f"鎵归噺娣诲姞 {len(names)} 涓枃妗?)
+    
+    try:
+        _, db = connect_chroma()
+        chunk_cfg = get_chunk_config()
+        
+        success = 0
+        failed = 0
+        total_chunks = 0
+        
+        for i, name in enumerate(names, 1):
+            doc_path = find_doc_in_docs(name)
+            if not doc_path:
+                log_error(f"[{i}/{len(names)}] 鏈壘鍒? {name}")
+                failed += 1
                 continue
-            doc_name = full_path.stem
-            text = f"[文件名: {doc_name}]\n{text}"
-            doc = {"path": str(full_path), "text": text}
-            count = db.add(doc, chunk_cfg, source_type="local_file")
-            total += count
-            elapsed = time.time() - t0
-            print(f"  [{i}/{n}] [OK] {full_path.name} ({count} chunks, {elapsed:.1f}s)")
-        except Exception as e:
-            print(f"  [{i}/{n}] [FAIL] {full_path.name}: {e}")
+            
+            try:
+                text = read_file(doc_path)
+                if not text or not text.strip():
+                    log_info(f"[{i}/{len(names)}] 璺宠繃绌烘枃浠? {Path(doc_path).name}")
+                    continue
+                
+                doc_name = Path(doc_path).stem
+                text = f"[鏂囦欢鍚? {doc_name}]\n{text}"
+                doc = {"path": doc_path, "text": text}
+                
+                count = db.add(doc, chunk_cfg, source_type="local_file")
+                total_chunks += count
+                success += 1
+                log_ok(f"[{i}/{len(names)}] {Path(doc_path).name} ({count} chunks)")
+            except Exception as e:
+                log_error(f"[{i}/{len(names)}] 澶辫触: {Path(doc_path).name} - {e}")
+                failed += 1
+        
+        print()
+        log_ok(f"鎵归噺娣诲姞瀹屾垚: {success} 鎴愬姛, {failed} 澶辫触, 鍏?{total_chunks} chunks")
+        
+    except Exception as e:
+        log_error(f"杩炴帴鏁版嵁搴撳け璐? {e}")
 
-    elapsed_total = time.time() - t_start
-    print(f"\n  添加完成! 共 {total} chunks, 耗时 {elapsed_total:.1f}s")
 
-
-def add_all_documents():
-    """添加所有本地文档"""
-    local_docs = get_local_documents()
-    if not local_docs:
-        print("  没有找到本地文档")
+def delete_document():
+    """鍒犻櫎鍗曚釜鏂囨。鐨勫悜閲忚褰?""
+    filename = input("\n  璇疯緭鍏ユ枃妗ｅ悕绉? ").strip()
+    if not filename:
+        log_info("宸插彇娑?)
         return
-    print(f"  找到 {len(local_docs)} 个本地文档")
-    add_documents(local_docs)
-
-
-def delete_vector_records(file_paths: list):
-    """删除向量记录"""
-    print(f"\n  删除向量记录...")
+    
     try:
         _, db = connect_chroma()
+        
+        # 鏌ユ壘鍖归厤鐨勫悜閲忚褰?        docs = db.list_documents()
+        matches = [d for d in docs if filename.lower() in d["source_name"].lower()]
+        
+        if not matches:
+            log_error(f"鏈壘鍒板尮閰嶇殑鍚戦噺璁板綍: {filename}")
+            return
+        
+        if len(matches) > 1:
+            log_info("鎵惧埌澶氫釜鍖归厤:")
+            for d in matches:
+                log_info(f"  - {d['source_name']} ({d['chunks']} chunks)")
+        
+        doc = matches[0]
+        log_step(f"鍒犻櫎鍚戦噺璁板綍: {doc['source_name']}")
+        
+        if not confirm(f"纭畾鍒犻櫎 {doc['source_name']} ({doc['chunks']} chunks)?"):
+            return
+        
+        db.delete(doc["source"])
+        log_ok(f"鍒犻櫎鎴愬姛: {doc['source_name']}")
+        
     except Exception as e:
-        print(f"  连接失败: {e}")
+        log_error(f"鍒犻櫎澶辫触: {e}")
+
+
+def delete_documents_batch():
+    """鎵归噺鍒犻櫎鏂囨。鐨勫悜閲忚褰?""
+    print("\n  璇疯緭鍏ユ枃妗ｅ悕绉帮紙澶氫釜鐢ㄧ┖鏍兼垨閫楀彿鍒嗛殧锛?")
+    input_str = input("  > ").strip()
+    if not input_str:
+        log_info("宸插彇娑?)
         return
-
-    total = 0
-    for file_path in file_paths:
-        try:
-            db.delete(file_path)
-            total += 1
-            print(f"  [OK] {file_path}")
-        except Exception as e:
-            print(f"  [FAIL] {file_path}: {e}")
-    print(f"\n  删除完成! 共 {total} 个")
-
-
-def delete_all_vector_records():
-    """删除所有向量记录"""
+    
+    # 瑙ｆ瀽鏂囦欢鍚嶅垪琛?    names = []
+    for sep in [",", " ", "\t"]:
+        names = [n.strip() for n in input_str.split(sep) if n.strip()]
+        if names:
+            break
+    
+    if not names:
+        log_info("鏈緭鍏ユ湁鏁堢殑鏂囨。鍚嶇О")
+        return
+    
     try:
         _, db = connect_chroma()
+        docs = db.list_documents()
+        
+        # 鏌ユ壘鎵€鏈夊尮閰?        to_delete = []
+        for name in names:
+            matches = [d for d in docs if name.lower() in d["source_name"].lower()]
+            if matches:
+                to_delete.extend(matches)
+            else:
+                log_warn(f"鏈壘鍒? {name}")
+        
+        if not to_delete:
+            log_info("娌℃湁鎵惧埌鍖归厤鐨勬枃妗?)
+            return
+        
+        # 鍘婚噸
+        seen = set()
+        unique_delete = []
+        for d in to_delete:
+            if d["source"] not in seen:
+                seen.add(d["source"])
+                unique_delete.append(d)
+        
+        log_step(f"鎵归噺鍒犻櫎 {len(unique_delete)} 涓枃妗ｇ殑鍚戦噺璁板綍")
+        
+        # 鏄剧ず灏嗚鍒犻櫎鐨勬枃妗?        for d in unique_delete:
+            log_info(f"  - {d['source_name']} ({d['chunks']} chunks)")
+        
+        if not confirm("纭畾鍒犻櫎浠ヤ笂璁板綍?"):
+            return
+        
+        success = 0
+        failed = 0
+        for d in unique_delete:
+            try:
+                db.delete(d["source"])
+                log_ok(f"宸插垹闄? {d['source_name']}")
+                success += 1
+            except Exception as e:
+                log_error(f"鍒犻櫎澶辫触: {d['source_name']} - {e}")
+                failed += 1
+        
+        print()
+        log_ok(f"鎵归噺鍒犻櫎瀹屾垚: {success} 鎴愬姛, {failed} 澶辫触")
+        
     except Exception as e:
-        print(f"  连接失败: {e}")
-        return
-
-    vector_docs = db.list_documents()
-    if not vector_docs:
-        print("  向量库为空")
-        return
-    print(f"  找到 {len(vector_docs)} 个文档")
-    confirm = input("  确认删除所有向量记录？(y/N): ").strip().lower()
-    if confirm != "y":
-        print("  取消")
-        return
-    delete_vector_records([d["source"] for d in vector_docs])
+        log_error(f"杩炴帴鏁版嵁搴撳け璐? {e}")
 
 
-def update_documents(file_paths: list):
-    """更新向量库中的文档"""
-    print(f"\n  更新向量库文档...")
-    try:
-        _, db = connect_chroma()
-    except Exception as e:
-        print(f"  连接失败: {e}")
-        return
-
-    chunk_cfg = get_chunk_config()
-    total = 0
-    t_start = time.time()
-    n = len(file_paths)
-    for i, file_path in enumerate(file_paths, 1):
-        full_path = Path(file_path)
-        if not full_path.exists():
-            print(f"  [{i}/{n}] [FAIL] 文件不存在: {full_path.name}")
-            continue
-        try:
-            t0 = time.time()
-            text = read_file(str(full_path))
-            if not text or not text.strip():
-                print(f"  [{i}/{n}] [SKIP] 内容为空: {full_path.name}")
-                continue
-            doc_name = full_path.stem
-            text = f"[文件名: {doc_name}]\n{text}"
-            doc = {"path": str(full_path), "text": text}
-            count = db.update(doc, chunk_cfg, source_type="local_file")
-            total += count
-            elapsed = time.time() - t0
-            print(f"  [{i}/{n}] [OK] {full_path.name} ({count} chunks, {elapsed:.1f}s)")
-        except Exception as e:
-            print(f"  [{i}/{n}] [FAIL] {full_path.name}: {e}")
-
-    elapsed_total = time.time() - t_start
-    print(f"\n  更新完成! 共 {total} chunks, 耗时 {elapsed_total:.1f}s")
-
-
-def update_all_documents():
-    """更新所有向量库文档"""
-    try:
-        _, db = connect_chroma()
-    except Exception as e:
-        print(f"  连接失败: {e}")
-        return
-
-    local_file_docs = [d for d in db.list_documents() if d.get("source_type") == "local_file"]
-    if not local_file_docs:
-        print("  没有本地文件类型的向量记录")
-        return
-    print(f"  找到 {len(local_file_docs)} 个文档")
-    update_documents([d["source"] for d in local_file_docs])
-
-
-def sync_documents():
-    """同步本地文件和向量库"""
-    print(f"\n  同步本地文件和向量库...")
-    try:
-        _, db = connect_chroma()
-    except Exception as e:
-        print(f"  连接失败: {e}")
-        return
-
-    chunk_cfg = get_chunk_config()
-    docs_dir = ROOT / "data" / "docs"
-
-    print(f"  加载本地文档...")
-    documents = load_all_documents(docs_dir)
-    if not documents:
-        print("  没有本地文档")
-        return
-
-    t_start = time.time()
-    stats = db.sync(documents, chunk_cfg)
-    elapsed = time.time() - t_start
-    total_ops = stats["added"] + stats["updated"] + stats["deleted"]
-    if total_ops == 0:
-        print(f"\n  无变化（{stats['unchanged']} 个文件未变）")
-    else:
-        print(f"\n  新增: {stats['added']}  更新: {stats['updated']}  "
-              f"未变: {stats['unchanged']}  删除: {stats['deleted']}")
-    print(f"  同步完成! 当前 {db.count()} 条记录, 耗时 {elapsed:.1f}s")
-
-
-def rebuild_database():
-    """全量重建向量库"""
-    print(f"\n  全量重建向量库...")
-    confirm = input("  [!] 警告：这将清空向量库并重新添加所有文档！确认？(y/N): ").strip().lower()
-    if confirm != "y":
-        print("  取消重建")
-        return
-
-    try:
-        _, db = connect_chroma()
-    except Exception as e:
-        print(f"  连接失败: {e}")
-        return
-
-    chunk_cfg = get_chunk_config()
-    docs_dir = ROOT / "data" / "docs"
-
-    print(f"  加载本地文档...")
-    documents = load_all_documents(docs_dir)
-    if not documents:
-        print("  没有文档")
-        return
-
-    t_start = time.time()
-    count = db.rebuild(documents, chunk_cfg)
-    elapsed = time.time() - t_start
-    print(f"\n  重建完成! {count} chunks, 耗时 {elapsed:.1f}s")
-
-
-def clean_orphan_records():
-    """清理孤立记录"""
-    print(f"\n  清理孤立记录...")
-    try:
-        _, db = connect_chroma()
-    except Exception as e:
-        print(f"  连接失败: {e}")
-        return
-
-    orphans = db.check_orphan_records(str(ROOT / "data" / "docs"))
-    if not orphans:
-        print("  没有孤立记录")
-        return
-
-    print(f"  找到 {len(orphans)} 个孤立记录:")
-    for doc in orphans:
-        print(f"    {doc['source_name']:<30} {doc['chunks']} chunks")
-
-    confirm = input("\n  确认清理？(y/N): ").strip().lower()
-    if confirm != "y":
-        print("  取消")
-        return
-
-    count = db.clean_orphan_records(str(ROOT / "data" / "docs"))
-    print(f"  清理完成! 共清理 {count} 个")
-
-
-def delete_local_files(file_paths: list):
-    """删除本地文件"""
-    print(f"\n  删除本地文件...")
-    total = 0
-    for file_path in file_paths:
-        full_path = Path(file_path)
-        if not full_path.exists():
-            print(f"  [SKIP] 不存在: {file_path}")
-            continue
-        try:
-            full_path.unlink()
-            total += 1
-            print(f"  [OK] {file_path}")
-        except Exception as e:
-            print(f"  [FAIL] {file_path}: {e}")
-    print(f"\n  删除完成! 共 {total} 个")
-
-
-def add_web_content():
-    """添加网页内容"""
-    print(f"\n  添加网页内容到向量库...")
-    url = input("  请输入网页 URL: ").strip()
+def crawl_webpage():
+    """鐖彇鍗曚釜缃戦〉"""
+    from core.utils import md5_short
+    
+    url = input("\n  璇疯緭鍏ョ綉椤?URL: ").strip()
     if not url:
-        print("  URL 不能为空")
+        log_info("宸插彇娑?)
         return
-
-    try:
-        _, db = connect_chroma()
-    except Exception as e:
-        print(f"  连接失败: {e}")
-        return
-
+    
+    log_step(f"鐖彇缃戦〉: {url}")
+    
     try:
         import requests
         from bs4 import BeautifulSoup
-        print(f"  正在爬取...")
+    except ImportError:
+        log_error("缂哄皯渚濊禆锛岃杩愯: uv pip install requests beautifulsoup4")
+        return
+    
+    try:
+        # 1. 鐖彇缃戦〉
         response = requests.get(url, timeout=30)
         response.raise_for_status()
         response.encoding = response.apparent_encoding
+        
         soup = BeautifulSoup(response.text, "html.parser")
         title = soup.title.string if soup.title else url
-        for script in soup(["script", "style"]):
+        
+        # 2. 鎻愬彇绾枃鏈?        for script in soup(["script", "style"]):
             script.decompose()
         text = soup.get_text()
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = " ".join(chunk for chunk in chunks if chunk)
+        text = " ".join(text.split())
+        
         if not text:
-            print(f"  网页内容为空")
+            log_error("缃戦〉鍐呭涓虹┖")
             return
-        doc = {
-            "path": url,
-            "text": f"[网页标题: {title}]\n[来源: {url}]\n{text}",
-            "title": title,
-        }
+        
+        # 3. 淇濆瓨鍒?data/web 鐩綍
+        web_dir = ROOT / "data" / "web"
+        web_dir.mkdir(parents=True, exist_ok=True)
+        
+        filename = f"{md5_short(url)}.txt"
+        filepath = web_dir / filename
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(f"[缃戦〉鏍囬: {title}]\n")
+            f.write(f"[鏉ユ簮: {url}]\n")
+            f.write(f"[鐖彇鏃堕棿: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n\n")
+            f.write(text)
+        
+        # 4. 娣诲姞鍒板悜閲忓簱
+        from core.document import read_file
+        from config.settings import get_chunk_config
+        
+        _, db = connect_chroma()
         chunk_cfg = get_chunk_config()
-        count = db.add(doc, chunk_cfg, source_type="web_crawl")
-        print(f"  [OK] {url} ({count} chunks)")
-    except ImportError:
-        print(f"  缺少依赖，请运行: uv pip install requests beautifulsoup4")
+        
+        text_content = read_file(str(filepath))
+        doc_name = filepath.stem
+        doc = {"path": str(filepath), "text": f"[鏂囦欢鍚? {doc_name}]\n{text_content}"}
+        count = db.add(doc, chunk_cfg, source_type="local_file")
+        
+        log_ok(f"鐖彇鎴愬姛: {filename} ({count} chunks)")
+        
     except Exception as e:
-        print(f"  失败: {e}")
+        log_error(f"鐖彇澶辫触: {e}")
 
 
-def start_services():
-    """启动所有服务"""
-    import subprocess
-    print("\n  启动所有服务...")
-    subprocess.run([sys.executable, "start_all.py"], cwd=ROOT)
+def crawl_webpages_batch():
+    """鎵归噺鐖彇缃戦〉"""
+    from core.utils import md5_short
+    
+    print("\n  璇疯緭鍏ョ綉椤?URL锛堝涓敤绌烘牸鎴栭€楀彿鍒嗛殧锛?")
+    input_str = input("  > ").strip()
+    if not input_str:
+        log_info("宸插彇娑?)
+        return
+    
+    # 瑙ｆ瀽 URL 鍒楄〃
+    urls = []
+    for sep in [",", " ", "\t"]:
+        urls = [u.strip() for u in input_str.split(sep) if u.strip()]
+        if urls:
+            break
+    
+    if not urls:
+        log_info("鏈緭鍏ユ湁鏁堢殑 URL")
+        return
+    
+    log_step(f"鎵归噺鐖彇 {len(urls)} 涓綉椤?)
+    
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+    except ImportError:
+        log_error("缂哄皯渚濊禆锛岃杩愯: uv pip install requests beautifulsoup4")
+        return
+    
+    from core.document import read_file
+    from config.settings import get_chunk_config
+    
+    web_dir = ROOT / "data" / "web"
+    web_dir.mkdir(parents=True, exist_ok=True)
+    
+    _, db = connect_chroma()
+    chunk_cfg = get_chunk_config()
+    
+    success = 0
+    failed = 0
+    total_chunks = 0
+    
+    for i, url in enumerate(urls, 1):
+        try:
+            # 鐖彇缃戦〉
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            response.encoding = response.apparent_encoding
+            
+            soup = BeautifulSoup(response.text, "html.parser")
+            title = soup.title.string if soup.title else url
+            
+            # 鎻愬彇绾枃鏈?            for script in soup(["script", "style"]):
+                script.decompose()
+            text = soup.get_text()
+            text = " ".join(text.split())
+            
+            if not text:
+                log_info(f"[{i}/{len(urls)}] 璺宠繃绌虹綉椤? {url}")
+                continue
+            
+            # 淇濆瓨鍒版湰鍦?            filename = f"{md5_short(url)}.txt"
+            filepath = web_dir / filename
+            
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(f"[缃戦〉鏍囬: {title}]\n")
+                f.write(f"[鏉ユ簮: {url}]\n")
+                f.write(f"[鐖彇鏃堕棿: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n\n")
+                f.write(text)
+            
+            # 娣诲姞鍒板悜閲忓簱
+            text_content = read_file(str(filepath))
+            doc_name = filepath.stem
+            doc = {"path": str(filepath), "text": f"[鏂囦欢鍚? {doc_name}]\n{text_content}"}
+            count = db.add(doc, chunk_cfg, source_type="local_file")
+            
+            total_chunks += count
+            success += 1
+            log_ok(f"[{i}/{len(urls)}] {title} ({count} chunks)")
+            
+        except Exception as e:
+            failed += 1
+            log_error(f"[{i}/{len(urls)}] 澶辫触: {url} - {e}")
+    
+    print()
+    log_ok(f"鎵归噺鐖彇瀹屾垚: {success} 鎴愬姛, {failed} 澶辫触, 鍏?{total_chunks} chunks")
 
 
-# ============================================================
-#  主入口
-# ============================================================
+def sync_documents(source: str = "all"):
+    """鍚屾鏂囨。锛堝姣攈ash锛岃嚜鍔ㄥ鍒犳敼锛?""
+    from core.document import load_all_documents
+    from config.settings import get_chunk_config
+    
+    log_step("鍚屾鏂囨。...")
+    
+    try:
+        _, db = connect_chroma()
+        chunk_cfg = get_chunk_config()
+        
+        # 鏍规嵁鏁版嵁婧愬姞杞芥枃妗?        dirs = []
+        if source in ("all", "docs"):
+            dirs.append(ROOT / "data" / "docs")
+        if source in ("all", "web"):
+            dirs.append(ROOT / "data" / "web")
+        
+        documents = load_all_documents(*dirs)
+        
+        if not documents:
+            log_info("娌℃湁鏈湴鏂囨。")
+            return
+        
+        # 鏄剧ず鍔犺浇淇℃伅
+        if source == "all":
+            docs_count = len(load_all_documents(ROOT / "data" / "docs"))
+            web_count = len(load_all_documents(ROOT / "data" / "web"))
+            log_info(f"鍔犺浇 {len(documents)} 涓枃妗?({docs_count} docs + {web_count} web)")
+        else:
+            log_info(f"鍔犺浇 {len(documents)} 涓枃妗?)
+        
+        # 杩涘害鍥炶皟
+        def on_progress(op, idx, total, name, count):
+            if op == "add":
+                progress_bar(idx, total, prefix="鏂板", suffix=f"{name} ({count} chunks)")
+            elif op == "update":
+                progress_bar(idx, total, prefix="鏇存柊", suffix=f"{name} ({count} chunks)")
+            elif op == "delete":
+                log_info(f"鍒犻櫎: {name}")
+        
+        stats = db.sync(documents, chunk_cfg, on_progress=on_progress)
+        
+        print()  # 鎹㈣
+        if stats["added"] + stats["updated"] + stats["deleted"] == 0:
+            log_info(f"鏃犲彉鍖?({stats['unchanged']} 涓枃浠舵湭鍙?")
+        else:
+            log_ok(f"鍚屾瀹屾垚: 鏂板 {stats['added']}, 鏇存柊 {stats['updated']}, 鍒犻櫎 {stats['deleted']}, 鏈彉 {stats['unchanged']}")
+        
+    except Exception as e:
+        log_error(f"鍚屾澶辫触: {e}")
+
+
+def rebuild_documents(source: str = "all"):
+    """鍏ㄩ噺閲嶅缓鍚戦噺搴?""
+    from core.document import load_all_documents
+    from config.settings import get_chunk_config
+    
+    if not confirm("纭畾瑕佸叏閲忛噸寤哄悜閲忓簱锛熻繖灏嗘竻绌虹幇鏈夋暟鎹苟閲嶆柊澶勭悊鎵€鏈夋枃妗?, default=False):
+        return
+    
+    log_step("鍏ㄩ噺閲嶅缓鍚戦噺搴?..")
+    
+    try:
+        _, db = connect_chroma()
+        chunk_cfg = get_chunk_config()
+        
+        # 鏍规嵁鏁版嵁婧愬姞杞芥枃妗?        dirs = []
+        if source in ("all", "docs"):
+            dirs.append(ROOT / "data" / "docs")
+        if source in ("all", "web"):
+            dirs.append(ROOT / "data" / "web")
+        
+        documents = load_all_documents(*dirs)
+        
+        if not documents:
+            log_info("娌℃湁鏈湴鏂囨。")
+            return
+        
+        # 鏄剧ず鍔犺浇淇℃伅
+        if source == "all":
+            docs_count = len(load_all_documents(ROOT / "data" / "docs"))
+            web_count = len(load_all_documents(ROOT / "data" / "web"))
+            log_info(f"鍔犺浇 {len(documents)} 涓枃妗?({docs_count} docs + {web_count} web)")
+        else:
+            log_info(f"鍔犺浇 {len(documents)} 涓枃妗?)
+        
+        # 杩涘害鍥炶皟
+        def on_progress(op, idx, total, name, count):
+            progress_bar(idx, total, prefix="閲嶅缓涓?, suffix=f"{name} ({count} chunks)")
+        
+        total_chunks = db.rebuild(documents, chunk_cfg, on_progress=on_progress)
+        
+        print()  # 鎹㈣
+        log_ok(f"閲嶅缓瀹屾垚: {total_chunks} chunks, {len(documents)} 涓枃妗?)
+        
+    except Exception as e:
+        log_error(f"閲嶅缓澶辫触: {e}")
+
+
+def clean_orphan_records():
+    """娓呯悊瀛ょ珛璁板綍"""
+    log_step("妫€鏌ュ绔嬭褰?..")
+    
+    try:
+        _, db = connect_chroma()
+        docs_dir = str(ROOT / "data" / "docs")
+        web_dir = str(ROOT / "data" / "web")
+        
+        orphans = db.check_orphan_records(docs_dir, web_dir)
+        
+        if not orphans:
+            log_info("娌℃湁瀛ょ珛璁板綍")
+            return
+        
+        log_info(f"鎵惧埌 {len(orphans)} 涓绔嬭褰?")
+        for doc in orphans:
+            log_info(f"  - {doc['source_name']} ({doc['chunks']} chunks)")
+        
+        if not confirm("纭畾娓呯悊杩欎簺瀛ょ珛璁板綍锛?):
+            return
+        
+        count = 0
+        for doc in orphans:
+            try:
+                db.delete(doc["source"])
+                count += 1
+            except:
+                pass
+        log_ok(f"娓呯悊瀹屾垚: {count} 涓绔嬭褰?)
+        
+    except Exception as e:
+        log_error(f"娓呯悊澶辫触: {e}")
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Ezy-RAG V0.0.18 数据库管理工具")
-    subparsers = parser.add_subparsers(dest="command")
-
-    subparsers.add_parser("list", help="显示文档映射表")
-    subparsers.add_parser("status", help="显示数据库状态")
-
-    add_p = subparsers.add_parser("add", help="添加文档")
-    add_p.add_argument("files", nargs="*")
-    add_p.add_argument("--all", action="store_true")
-    add_p.add_argument("--web", action="store_true")
-
-    del_p = subparsers.add_parser("delete", help="删除向量记录")
-    del_p.add_argument("files", nargs="*")
-    del_p.add_argument("--all", action="store_true")
-
-    del_local_p = subparsers.add_parser("delete-local", help="删除本地文件")
-    del_local_p.add_argument("files", nargs="*")
-
-    subparsers.add_parser("clean", help="清理孤立记录")
-
-    upd_p = subparsers.add_parser("update", help="更新文档")
-    upd_p.add_argument("files", nargs="*")
-    upd_p.add_argument("--all", action="store_true")
-
-    subparsers.add_parser("sync", help="同步本地和向量库")
-    subparsers.add_parser("rebuild", help="全量重建")
-    subparsers.add_parser("start", help="启动服务")
-
-    args = parser.parse_args()
-
-    if args.command == "list":
-        list_documents()
-    elif args.command == "status":
-        show_status()
-    elif args.command == "add":
-        if args.web:
-            add_web_content()
-        elif args.all:
-            add_all_documents()
-        elif args.files:
-            add_documents(args.files)
-        else:
-            print("  请指定文件路径或使用 --all/--web")
-    elif args.command == "delete":
-        if args.all:
-            delete_all_vector_records()
-        elif args.files:
-            delete_vector_records(args.files)
-        else:
-            print("  请指定文件路径或使用 --all")
-    elif args.command == "delete-local":
-        if args.files:
-            delete_local_files(args.files)
-        else:
-            print("  请指定文件路径")
-    elif args.command == "clean":
-        clean_orphan_records()
-    elif args.command == "update":
-        if args.all:
-            update_all_documents()
-        elif args.files:
-            update_documents(args.files)
-        else:
-            print("  请指定文件路径或使用 --all")
-    elif args.command == "sync":
-        sync_documents()
-    elif args.command == "rebuild":
-        rebuild_database()
-    elif args.command == "start":
-        start_services()
-    else:
-        # 交互式菜单
-        while True:
-            print("\n" + "=" * 60)
-            print("  Ezy-RAG V0.0.18 — 数据库管理")
-            print("=" * 60)
-            print("  1. 查看文档映射表")
-            print("  2. 查看数据库状态")
-            print("  3. 添加文档")
-            print("  4. 删除向量记录")
-            print("  5. 删除本地文件")
-            print("  6. 清理孤立记录")
-            print("  7. 更新文档")
-            print("  8. 同步本地和向量库")
-            print("  9. 全量重建")
-            print("  10. 添加网页内容")
-            print("  11. 启动服务")
-            print("  12. 退出")
-            choice = input("\n请选择 (1-12): ").strip()
-            if choice == "1":
-                list_documents()
-            elif choice == "2":
-                show_status()
-            elif choice == "3":
-                print("\n  1. 指定文件  2. 所有本地文档  3. 网页内容  4. 返回")
-                sub = input("  请选择: ").strip()
-                if sub == "1":
-                    files = input("  文件路径（空格分隔）: ").strip().split()
-                    if files:
-                        add_documents(files)
-                elif sub == "2":
-                    add_all_documents()
-                elif sub == "3":
-                    add_web_content()
-            elif choice == "4":
-                print("\n  1. 指定文件  2. 所有记录  3. 返回")
-                sub = input("  请选择: ").strip()
-                if sub == "1":
-                    files = input("  文件路径（空格分隔）: ").strip().split()
-                    if files:
-                        delete_vector_records(files)
-                elif sub == "2":
-                    delete_all_vector_records()
-            elif choice == "5":
-                files = input("  文件路径（空格分隔）: ").strip().split()
-                if files:
-                    delete_local_files(files)
-            elif choice == "6":
-                clean_orphan_records()
-            elif choice == "7":
-                print("\n  1. 指定文件  2. 所有记录  3. 返回")
-                sub = input("  请选择: ").strip()
-                if sub == "1":
-                    files = input("  文件路径（空格分隔）: ").strip().split()
-                    if files:
-                        update_documents(files)
-                elif sub == "2":
-                    update_all_documents()
-            elif choice == "8":
-                sync_documents()
-            elif choice == "9":
-                rebuild_database()
-            elif choice == "10":
-                add_web_content()
-            elif choice == "11":
-                start_services()
-            elif choice == "12":
-                break
-            else:
-                print("  无效的选择")
+    """涓诲嚱鏁?""
+    while True:
+        header("Ezy-RAG 鏂囨。绠＄悊")
+        
+        # 鏄剧ず缁熻
+        stats = get_database_stats()
+        info_card("鏂囨。缁熻", {
+            "鏈湴鏂囨。": f"{stats['docs_count']} 涓?,
+            "缃戦〉鏁版嵁": f"{stats['web_count']} 涓?,
+            "宸插鍏?: f"{stats['vector_docs']} 涓?,
+            "鍚戦噺鍧?: f"{stats['chunks']} 涓?,
+        })
+        
+        # 鑿滃崟
+        choice = menu("鎿嶄綔", [
+            "鏌ョ湅鏂囨。鍒楄〃",
+            "娣诲姞鏂囨。",
+            "鎵归噺娣诲姞",
+            "鍒犻櫎鏂囨。",
+            "鎵归噺鍒犻櫎",
+            "缃戦〉鐖彇",
+            "鍚屾鏂囨。",
+            "鍏ㄩ噺閲嶅缓",
+            "娓呯悊瀛ょ珛",
+            "杩斿洖"
+        ])
+        
+        if choice == 1:
+            source = select_data_source("閫夋嫨鏌ョ湅鑼冨洿")
+            show_document_list(source)
+        elif choice == 2:
+            add_document()
+        elif choice == 3:
+            add_documents_batch()
+        elif choice == 4:
+            delete_document()
+        elif choice == 5:
+            delete_documents_batch()
+        elif choice == 6:
+            # 缃戦〉鐖彇瀛愯彍鍗?            sub_choice = menu("缃戦〉鐖彇", [
+                "鐖彇鍗曚釜缃戦〉",
+                "鎵归噺鐖彇缃戦〉",
+                "杩斿洖"
+            ])
+            if sub_choice == 1:
+                crawl_webpage()
+            elif sub_choice == 2:
+                crawl_webpages_batch()
+        elif choice == 7:
+            source = select_data_source("閫夋嫨鍚屾鑼冨洿")
+            sync_documents(source)
+        elif choice == 8:
+            source = select_data_source("閫夋嫨閲嶅缓鑼冨洿")
+            rebuild_documents(source)
+        elif choice == 9:
+            clean_orphan_records()
+        elif choice == 10:
+            break
+        
+        if choice != 10:
+            from cli.ui import pause
+            pause()
 
 
 if __name__ == "__main__":

@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.18 — 指针管理模块
-管理 collection_pointer.json，实现原子写入
-
-指针文件记录当前活跃的集合名，格式：
+Ezy-RAG 鈥?鎸囬拡绠＄悊妯″潡
+绠＄悊 collection_pointer.json锛屽疄鐜板師瀛愬啓鍏?
+鎸囬拡鏂囦欢璁板綍褰撳墠娲昏穬鐨勯泦鍚堝悕锛屾牸寮忥細
 {
   "default_collection": "default_collection_v20260527_192848"
 }
@@ -17,7 +16,7 @@ POINTER_FILE = ROOT / "runtime" / "state" / "collection_pointer.json"
 
 
 def read_pointer() -> dict:
-    """读取指针文件"""
+    """璇诲彇鎸囬拡鏂囦欢"""
     if POINTER_FILE.exists():
         with open(POINTER_FILE, "r", encoding="utf-8") as fp:
             return json.load(fp)
@@ -25,7 +24,7 @@ def read_pointer() -> dict:
 
 
 def write_pointer(data: dict):
-    """原子写入指针文件（临时文件 + os.replace）"""
+    """鍘熷瓙鍐欏叆鎸囬拡鏂囦欢锛堜复鏃舵枃浠?+ os.replace锛?""
     POINTER_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = POINTER_FILE.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
@@ -34,13 +33,13 @@ def write_pointer(data: dict):
 
 
 def get_active_collection(config_key: str) -> str:
-    """获取活跃集合名，没有则回退到 config_key 本身"""
+    """鑾峰彇娲昏穬闆嗗悎鍚嶏紝娌℃湁鍒欏洖閫€鍒?config_key 鏈韩"""
     p = read_pointer()
     return p.get(config_key, config_key)
 
 
 def set_active_collection(config_key: str, name: str):
-    """设置活跃集合名"""
+    """璁剧疆娲昏穬闆嗗悎鍚?""
     p = read_pointer()
     p[config_key] = name
     write_pointer(p)

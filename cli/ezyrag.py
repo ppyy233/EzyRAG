@@ -1,30 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-Ezy-RAG V0.0.18 — 统一命令行入口
-用法: python ezyrag.py <command> [args...]
+Ezy-RAG — 统一命令行入口
+用法: python ezyrag.py [command]
 
 命令：
-  quickstart          快速开始向导
-  init                配置管理
-  service             服务管理
-  db <args>           数据库管理
-  build [args]        知识库构建
-  health              健康检查
+  service              服务管理
+  db                   文档管理
+  config               配置管理
+  health               健康检查
+  quickstart           快速开始向导
 
 示例：
-  python ezyrag.py quickstart           # 首次使用，一键初始化
-  python ezyrag.py init                 # 修改配置
-  python ezyrag.py service              # 启动/停止服务
-  python ezyrag.py db list              # 查看文档映射
-  python ezyrag.py db add --all         # 添加所有本地文档
-  python ezyrag.py db sync              # 同步本地和向量库
-  python ezyrag.py build                # 增量构建知识库
-  python ezyrag.py build --full         # 全量重建
-  python ezyrag.py health               # 检查服务状态
-"""
+  python ezyrag.py                 # 交互式菜单
+  python ezyrag.py service         # 服务管理
+  python ezyrag.py db              # 文档管理
+  python ezyrag.py config          # 配置管理
+  python ezyrag.py health          # 健康检�?"""
 import os
 import sys
-import socket
 import subprocess
 from pathlib import Path
 
@@ -37,487 +30,220 @@ if sys.platform == 'win32':
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from cli.ui import header, status_card, info_card, menu, confirm, log_ok, log_error, log_info, log_step
 
-# ============================================================
-#  工具函数
-# ============================================================
-
-def check_port(host: str, port: int) -> bool:
-    """检查端口是否可连接"""
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1)
-        result = sock.connect_ex((host, port))
-        sock.close()
-        return result == 0
-    except:
-        return False
-
-
-def check_python() -> tuple:
-    """检查 Python 版本"""
-    version = sys.version_info
-    if version.major < 3 or (version.major == 3 and version.minor < 11):
-        return False, f"{version.major}.{version.minor}.{version.micro}"
-    return True, f"{version.major}.{version.minor}.{version.micro}"
-
-
-def check_uv() -> bool:
-    """检查 uv 是否安装"""
-    try:
-        result = subprocess.run(
-            ["uv", "--version"],
-            capture_output=True,
-            text=True,
-            cwd=ROOT
-        )
-        return result.returncode == 0
-    except FileNotFoundError:
-        return False
-
-
-def check_env() -> bool:
-    """检查 .env 是否存在"""
-    return (ROOT / "config" / ".env").exists()
-
-
-def run_script(script: str, args: list = None):
-    """运行 Python 脚本"""
-    cmd = [sys.executable, script]
-    if args:
-        cmd.extend(args)
-    return subprocess.run(cmd, cwd=ROOT)
-
-
-def run_module(module: str, args: list = None):
-    """运行 Python 模块"""
-    cmd = [sys.executable, "-m", module]
-    if args:
-        cmd.extend(args)
-    return subprocess.run(cmd, cwd=ROOT)
-
-
-def pause():
-    """暂停等待用户输入"""
-    input("\n  按 Enter 继续...")
-
-
-def print_header(title: str):
-    """打印标题"""
-    print("\n" + "=" * 60)
-    print(f"  {title}")
-    print("=" * 60)
-
-
-def print_step(step: str, description: str):
-    """打印步骤"""
-    print(f"\n  Step {step}: {description}")
-    print("  " + "-" * 40)
-
-
-def print_ok(message: str):
-    """打印成功信息"""
-    print(f"  ✓ {message}")
-
-
-def print_error(message: str):
-    """打印错误信息"""
-    print(f"  ✗ {message}")
-
-
-def print_warn(message: str):
-    """打印警告信息"""
-    print(f"  ⚠ {message}")
-
-
-def print_info(message: str):
-    """打印信息"""
-    print(f"  {message}")
-
-
-# ============================================================
-#  环境检查
-# ============================================================
 
 def check_environment() -> bool:
-    """检查环境是否就绪"""
-    print("\n  环境检查：")
-    print("  " + "-" * 40)
+    """检查环境是否就�?""
+    log_step("环境检�?)
     
-    # 检查 Python
-    ok, ver = check_python()
-    if ok:
-        print_ok(f"Python {ver}")
-    else:
-        print_error(f"Python {ver}（需要 >= 3.11）")
-        print_info("请安装 Python 3.11+：https://www.python.org/downloads/")
+    # 检�?Python 版本
+    version = sys.version_info
+    if version.major < 3 or (version.major == 3 and version.minor < 11):
+        log_error(f"Python {version.major}.{version.minor}.{version.micro} (需�?>= 3.11)")
+        return False
+    log_ok(f"Python {version.major}.{version.minor}.{version.micro}")
+    
+    # 检�?uv
+    try:
+        result = subprocess.run(["uv", "--version"], capture_output=True, text=True, cwd=ROOT)
+        if result.returncode == 0:
+            log_ok("uv 已安�?)
+        else:
+            log_error("uv 未安�?)
+            return False
+    except FileNotFoundError:
+        log_error("uv 未安�?)
         return False
     
-    # 检查 uv
-    if check_uv():
-        print_ok("uv 已安装")
+    # 检�?.env
+    env_file = ROOT / "config" / ".env"
+    if env_file.exists():
+        log_ok("config/.env 已存�?)
     else:
-        print_error("uv 未安装")
-        print_info("安装命令：powershell -c \"irm https://astral.sh/uv/install.ps1 | iex\"")
-        return False
+        log_info("config/.env 不存在（将从模板创建�?)
     
-    # 检查 .env
-    if check_env():
-        print_ok("config/.env 已存在")
-    else:
-        print_warn("config/.env 不存在（将从模板创建）")
-    
-    print("  " + "-" * 40)
     return True
 
 
-# ============================================================
-#  quickstart 命令
-# ============================================================
-
 def cmd_quickstart():
-    """快速开始向导"""
-    print_header("Ezy-RAG Quick Start 向导")
+    """快速开始向�?""
+    header("Ezy-RAG Quick Start 向导")
     
-    # Step 1: 环境检查
-    print_step("1", "环境检查")
-    ok = check_environment()
-    if not ok:
-        print("\n  环境检查未通过，请先解决上述问题。")
+    # Step 1: 环境检�?    if not check_environment():
+        log_error("环境检查未通过，请先解决上述问�?)
         return
     
     # Step 2: 安装依赖
-    print_step("2", "安装依赖")
-    
-    # 检查 .venv 是否存在
+    log_step("安装依赖")
     if not (ROOT / ".venv").exists():
-        print_info("正在创建虚拟环境...")
+        log_info("正在创建虚拟环境...")
         result = subprocess.run(["uv", "venv"], cwd=ROOT, capture_output=True, text=True)
         if result.returncode != 0:
-            print_error(f"创建虚拟环境失败：{result.stderr}")
+            log_error(f"创建虚拟环境失败: {result.stderr}")
             return
-        print_ok("虚拟环境已创建")
+        log_ok("虚拟环境已创�?)
     
-    print_info("正在安装依赖...")
+    log_info("正在安装依赖...")
     result = subprocess.run(["uv", "sync"], cwd=ROOT, capture_output=True, text=True)
     if result.returncode != 0:
-        print_error(f"安装依赖失败：{result.stderr}")
+        log_error(f"安装依赖失败: {result.stderr}")
         return
-    print_ok("依赖已安装")
+    log_ok("依赖已安�?)
     
     # Step 3: 配置
-    print_step("3", "配置")
-    print_info("即将启动配置向导...")
-    pause()
-    run_script("cli/init.py")
+    log_step("配置")
+    if not (ROOT / "config" / ".env").exists():
+        log_info("即将启动配置向导...")
+        subprocess.run([sys.executable, "cli/init.py"], cwd=ROOT)
+    else:
+        log_info("配置文件已存在，跳过")
     
     # Step 4: 添加本地文档（可选）
-    print_step("4", "添加本地文档")
-    
+    log_step("添加本地文档")
     docs_dir = ROOT / "data" / "docs"
     if docs_dir.exists():
-        # 统计文档数量
         doc_count = 0
-        for ext in [".txt", ".md", ".pdf", ".docx", ".py", ".js", ".ts", ".java", ".c", ".cpp", ".go", ".rs"]:
+        for ext in [".txt", ".md", ".pdf", ".docx", ".py", ".js", ".ts"]:
             doc_count += len(list(docs_dir.glob(f"**/*{ext}")))
         
         if doc_count > 0:
-            print_info(f"发现 {doc_count} 个本地文档")
-            choice = input("  是否添加到向量库？(Y/n): ").strip().lower()
-            if choice != 'n':
-                print_info("正在添加文档...")
-                run_script("cli/db_manage.py", ["add", "--all"])
+            log_info(f"发现 {doc_count} 个本地文�?)
+            if confirm("是否添加到向量库�?, default=True):
+                subprocess.run([sys.executable, "cli/db_manage.py"], cwd=ROOT)
             else:
-                print_info("跳过添加文档")
+                log_info("跳过添加文档")
         else:
-            print_info("data/docs/ 目录为空，跳过添加文档")
+            log_info("data/docs/ 目录为空，跳过添加文�?)
     else:
-        print_info("data/docs/ 目录不存在，跳过添加文档")
+        log_info("data/docs/ 目录不存在，跳过添加文档")
     
     # Step 5: 启动服务
-    print_step("5", "启动服务")
-    print_info("即将启动服务管理...")
-    pause()
-    run_script("cli/start_all.py")
+    log_step("启动服务")
+    log_info("即将启动服务管理...")
+    subprocess.run([sys.executable, "cli/start_all.py"], cwd=ROOT)
     
     # 完成
-    print_header("Quick Start 完成！")
-    print("\n  下一步操作：")
-    print_info("python ezyrag.py db list          # 查看文档映射")
-    print_info("python ezyrag.py health           # 检查服务状态")
-    print_info("python ezyrag.py service          # 管理服务")
-    print_info("python ezyrag.py db add --all     # 添加更多文档")
-    print("")
+    header("Quick Start 完成�?)
+    print("\n  下一步操�?")
+    log_info("python ezyrag.py service      # 服务管理")
+    log_info("python ezyrag.py db           # 文档管理")
+    log_info("python ezyrag.py config       # 配置管理")
+    log_info("python ezyrag.py health       # 健康检�?)
 
 
-# ============================================================
-#  init 命令
-# ============================================================
+def cmd_health():
+    """健康检�?""
+    from cli.cli_core import get_service_status, get_database_stats
+    
+    header("Ezy-RAG 健康检�?)
+    
+    # 服务状�?    status = get_service_status()
+    services_display = [
+        {"name": "ChromaDB", "online": status["chromadb"]["online"], "info": status["chromadb"]["info"]},
+        {"name": "Embedding", "online": status["embedding"]["online"], "info": status["embedding"]["info"]},
+        {"name": "Rerank", "online": status["rerank"]["online"], "info": status["rerank"]["info"], "skip": status["rerank"].get("skip", False)},
+        {"name": "MCP", "online": status["mcp"]["online"], "info": status["mcp"]["info"]},
+    ]
+    status_card(services_display)
+    
+    # 数据库状�?    stats = get_database_stats()
+    info_card("数据库状�?, {
+        "本地文档": f"{stats['docs_count']} �?,
+        "网页数据": f"{stats['web_count']} �?,
+        "已导�?: f"{stats['vector_docs']} �?,
+        "向量�?: f"{stats['chunks']} �?,
+        "集合": stats['collection'] or "-"
+    })
 
-def cmd_init():
-    """配置管理"""
-    print_header("配置管理")
-    print_info("即将启动配置管理脚本...")
-    pause()
-    run_script("cli/init.py")
-
-
-# ============================================================
-#  service 命令
-# ============================================================
 
 def cmd_service():
     """服务管理"""
-    print_header("服务管理")
-    print_info("即将启动服务管理脚本...")
-    pause()
-    run_script("cli/start_all.py")
+    subprocess.run([sys.executable, "cli/start_all.py"], cwd=ROOT)
 
 
-# ============================================================
-#  db 命令
-# ============================================================
-
-def cmd_db(args):
-    """数据库管理"""
-    if not args:
-        # 无参数，进入交互式菜单
-        print_header("数据库管理")
-        print_info("即将启动数据库管理脚本...")
-        pause()
-        run_script("cli/db_manage.py")
-    else:
-        # 有参数，转发命令
-        print(f"\n  执行: python db_manage.py {' '.join(args)}")
-        print("  " + "-" * 40)
-        run_script("cli/db_manage.py", args)
+def cmd_db():
+    """文档管理"""
+    subprocess.run([sys.executable, "cli/db_manage.py"], cwd=ROOT)
 
 
-# ============================================================
-#  build 命令
-# ============================================================
+def cmd_config():
+    """配置管理"""
+    subprocess.run([sys.executable, "cli/init.py"], cwd=ROOT)
 
-def cmd_build(args):
-    """知识库构建"""
-    if not args:
-        # 无参数，显示提示
-        print_header("知识库构建")
-        print("\n  用法：")
-        print_info("python ezyrag.py build              # 增量构建")
-        print_info("python ezyrag.py build --full       # 全量重建")
-        print_info("python ezyrag.py build -t chinese   # 指定切块模板")
-        return
-    
-    print(f"\n  执行: python -m core.database {' '.join(args)}")
-    print("  " + "-" * 40)
-    run_module("core.database", args)
-
-
-# ============================================================
-#  health 命令
-# ============================================================
-
-def cmd_health():
-    """健康检查"""
-    print_header("Ezy-RAG 健康检查")
-    
-    # 从 .env 读取配置
-    env_path = ROOT / "config" / ".env"
-    env_config = {}
-    
-    if env_path.exists():
-        with open(env_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    env_config[key.strip()] = value.strip()
-    
-    # 检查服务状态
-    print("\n  服务状态：")
-    print("  " + "-" * 50)
-    
-    # ChromaDB
-    chroma_host = env_config.get("CHROMA_SERVER_HOST", "127.0.0.1")
-    chroma_port = int(env_config.get("CHROMA_SERVER_PORT", "9898"))
-    chroma_ok = check_port(chroma_host, chroma_port)
-    print(f"  {'✓' if chroma_ok else '✗'} ChromaDB    : {'运行中' if chroma_ok else '未运行'} ({chroma_host}:{chroma_port})")
-    
-    # MCP
-    mcp_host = env_config.get("MCP_SERVER_HOST", "127.0.0.1")
-    mcp_port = int(env_config.get("MCP_SERVER_PORT", "9766"))
-    mcp_ok = check_port(mcp_host, mcp_port)
-    print(f"  {'✓' if mcp_ok else '✗'} MCP         : {'运行中' if mcp_ok else '未运行'} ({mcp_host}:{mcp_port})")
-    
-    # Embedding
-    try:
-        from core.api import EmbeddingAPI
-        emb = EmbeddingAPI()
-        emb_ok, emb_err = emb.health_check()
-        emb_info = emb.get_info()
-        mode_str = "本地" if emb_info["mode"] == "local" else "云端"
-        if emb_ok:
-            print(f"  ✓ Embedding   : 在线 ({mode_str}, {emb_info['model']})")
-        else:
-            print(f"  ✗ Embedding   : 不可用 ({mode_str}, {emb_err})")
-    except Exception as e:
-        print(f"  ✗ Embedding   : 初始化失败 ({e})")
-    
-    # Rerank
-    try:
-        from core.api import RerankAPI
-        rerank = RerankAPI()
-        rerank_info = rerank.get_info()
-        if rerank_info["enabled"]:
-            rerank_ok, rerank_err = rerank.health_check()
-            mode_str = "本地" if rerank_info["mode"] == "local" else "云端"
-            if rerank_ok:
-                print(f"  ✓ Rerank      : 在线 ({mode_str}, {rerank_info['model']})")
-            else:
-                print(f"  ✗ Rerank      : 不可用 ({mode_str}, {rerank_err})")
-        else:
-            print(f"  - Rerank      : 未启用")
-    except Exception as e:
-        print(f"  ✗ Rerank      : 初始化失败 ({e})")
-    
-    # 数据库状态
-    print("\n  数据库状态：")
-    print("  " + "-" * 50)
-    
-    if chroma_ok:
-        try:
-            import chromadb
-            from config.pointer import get_active_collection
-            client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
-            
-            collection_name = get_active_collection("default_collection")
-            
-            try:
-                collection = client.get_collection(name=collection_name)
-                count = collection.count()
-                print_info(f"集合名      : {collection_name}")
-                print_info(f"向量数量    : {count}")
-                
-                # 检查孤立记录
-                result = collection.get(include=["metadatas"])
-                if result and result["metadatas"]:
-                    sources = set()
-                    for meta in result["metadatas"]:
-                        src = meta.get("source", "")
-                        if src:
-                            sources.add(src)
-                    
-                    orphan_count = 0
-                    for src in sources:
-                        for meta in result["metadatas"]:
-                            if meta.get("source") == src:
-                                source_type = meta.get("source_type", "local_file")
-                                if source_type == "local_file" and not Path(src).exists():
-                                    orphan_count += 1
-                                break
-                    
-                    if orphan_count > 0:
-                        print_warn(f"孤立记录  : {orphan_count} 个（本地文件已删除）")
-                        print_info(f"清理命令  : python ezyrag.py db clean")
-                    else:
-                        print_info(f"孤立记录    : 0 个")
-            except Exception as e:
-                print_info(f"集合不存在  : {e}")
-        except Exception as e:
-            print_info(f"连接失败    : {e}")
-    else:
-        print_info("ChromaDB 未运行，无法获取数据库状态")
-    
-    print("\n" + "=" * 60)
-
-
-# ============================================================
-#  帮助信息
-# ============================================================
 
 def show_help():
     """显示帮助信息"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║  Ezy-RAG V0.0.18 — 知识库系统                                ║
-╚══════════════════════════════════════════════════════════════╝
+�? Ezy-RAG V1.0.0 �?知识库系�?                               �?╚══════════════════════════════════════════════════════════════╝
 
-用法：
-  python ezyrag.py <command> [args...]
+用法�?  python ezyrag.py [command]
 
-命令：
-  quickstart          快速开始向导（首次使用）
-  init                配置管理（交互式菜单）
-  service             服务管理（交互式菜单）
-  db <args>           数据库管理
-  build [args]        知识库构建
-  health              健康检查
-  help                显示此帮助
-
-数据库管理 (db)：
-  python ezyrag.py db                 # 交互式菜单
-  python ezyrag.py db list            # 查看文档映射
-  python ezyrag.py db status          # 数据库状态
-  python ezyrag.py db add --all       # 添加所有本地文档
-  python ezyrag.py db add <file>      # 添加指定文件
-  python ezyrag.py db add-web         # 添加网页内容
-  python ezyrag.py db sync            # 同步本地和向量库
-  python ezyrag.py db clean           # 清理孤立记录
-  python ezyrag.py db rebuild         # 全量重建
-  python ezyrag.py db delete <file>   # 删除向量记录
-  python ezyrag.py db update --all    # 更新所有文档
-
-知识库构建 (build)：
-  python ezyrag.py build              # 增量构建
-  python ezyrag.py build --full       # 全量重建
-  python ezyrag.py build -t chinese   # 指定切块模板
-
-首次使用：
-  python ezyrag.py quickstart         # 一键初始化
+命令�?  quickstart          快速开始向导（首次使用�?  service             服务管理
+  db                  文档管理
+  config              配置管理
+  health              健康检�?  help                显示此帮�?
+首次使用�?  python ezyrag.py quickstart         # 一键初始化
 
 常用工作流：
-  1. python ezyrag.py quickstart      # 初始化配置
-  2. python ezyrag.py db add --all    # 添加文档
-  3. python ezyrag.py build           # 构建知识库
-  4. python ezyrag.py health          # 检查状态
-""")
+  1. python ezyrag.py quickstart      # 初始化配�?  2. python ezyrag.py db              # 添加文档
+  3. python ezyrag.py service         # 启动服务
+  4. python ezyrag.py health          # 检查状�?""")
 
-
-# ============================================================
-#  主入口
-# ============================================================
 
 def main():
-    """主函数"""
-    # 获取命令行参数
+    """主函�?""
     args = sys.argv[1:]
     
-    # 无参数，显示帮助
     if not args:
-        show_help()
+        # 无参数，显示交互式菜�?        while True:
+            header("Ezy-RAG V1.0.0 知识库系�?)
+            
+            choice = menu("功能", [
+                "快速开�?,
+                "服务管理",
+                "文档管理",
+                "配置管理",
+                "健康检�?,
+                "退�?
+            ])
+            
+            if choice == 1:
+                cmd_quickstart()
+            elif choice == 2:
+                cmd_service()
+            elif choice == 3:
+                cmd_db()
+            elif choice == 4:
+                cmd_config()
+            elif choice == 5:
+                cmd_health()
+            elif choice == 6:
+                break
+            
+            if choice != 6:
+                from cli.ui import pause
+                pause()
         return
     
-    # 解析命令
+    # 有参数，解析命令
     command = args[0].lower()
-    remaining_args = args[1:]
     
-    # 分发命令
     if command == "quickstart":
         cmd_quickstart()
-    elif command == "init":
-        cmd_init()
     elif command == "service":
         cmd_service()
     elif command == "db":
-        cmd_db(remaining_args)
-    elif command == "build":
-        cmd_build(remaining_args)
+        cmd_db()
+    elif command == "config":
+        cmd_config()
     elif command == "health":
         cmd_health()
     elif command in ["help", "--help", "-h"]:
         show_help()
     else:
-        print(f"\n  未知命令: {command}")
+        log_error(f"未知命令: {command}")
         print(f"  使用 'python ezyrag.py help' 查看帮助")
         sys.exit(1)
 
