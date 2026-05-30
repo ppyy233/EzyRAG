@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-# 日志配置 �?统一写入 embedding.log �?rerank.log
+# 日志配置 — 统一写入 embedding.log 和 rerank.log
 LOG_DIR = ROOT / "runtime" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -52,7 +52,7 @@ def _detect_provider(url: str) -> str:
 
 def _normalize_embedding_url(url: str) -> tuple:
     """
-    标准�?Embedding URL
+    标准化 Embedding URL
     返回: (base_url, full_url)
     """
     if url.endswith("/v1/embeddings"):
@@ -75,7 +75,7 @@ def _normalize_embedding_url(url: str) -> tuple:
 # ============================================================
 
 class EmbeddingAPI:
-    """统一�?Embedding API 适配�?""
+    """统一的 Embedding API 适配器"""
 
     def __init__(self):
         mode = os.getenv("EMBEDDING_MODE", "cloud").lower()
@@ -98,7 +98,7 @@ class EmbeddingAPI:
             try:
                 self._dim = int(dim_str)
             except ValueError:
-                emb_logger.warning(f"无效的维度配�? {dim_str}，将自动检�?)
+                emb_logger.warning(f"无效的维度配置: {dim_str}，将自动检测")
 
         self._provider = _detect_provider(url)
         self._base_url, self._full_url = _normalize_embedding_url(url)
@@ -113,7 +113,7 @@ class EmbeddingAPI:
         emb_logger.info(f"init: mode={self._mode}, model={self._model}, base_url={self._base_url}")
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """同步向量�?""
+        """同步向量化"""
         t0 = time.time()
         if self._provider == "cohere":
             result = self._embed_cohere(texts)
@@ -126,7 +126,7 @@ class EmbeddingAPI:
         return result
 
     async def embed_async(self, texts: list[str]) -> list[list[float]]:
-        """异步向量�?""
+        """异步向量化"""
         return await asyncio.to_thread(self.embed, texts)
 
     def _embed_openai(self, texts: list[str]) -> list[list[float]]:
@@ -136,10 +136,10 @@ class EmbeddingAPI:
             kwargs["dimensions"] = self._dim
         resp = self._client.embeddings.create(**kwargs)
         vectors = [item.embedding for item in resp.data]
-        # 自动检测维�?
+        # 自动检测维度
         if self._dim is None and vectors:
             self._dim = len(vectors[0])
-            emb_logger.info(f"自动检�?Embedding 维度: {self._dim}")
+            emb_logger.info(f"自动检测 Embedding 维度: {self._dim}")
         return vectors
 
     def _embed_cohere(self, texts: list[str]) -> list[list[float]]:
@@ -162,7 +162,7 @@ class EmbeddingAPI:
         return r.json()["embeddings"]["float"]
 
     def health_check(self) -> tuple[bool, str]:
-        """健康检�?""
+        """健康检查"""
         try:
             import httpx
             headers = {}
@@ -192,13 +192,13 @@ class EmbeddingAPI:
 # ============================================================
 
 class RerankAPI:
-    """统一�?Rerank API 适配器（本地/云端接口一致）"""
+    """统一的 Rerank API 适配器（本地/云端接口一致）"""
 
     def __init__(self):
         self._enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
         self._mode = os.getenv("RERANK_MODE", "local").lower()
 
-        # 读取 URL 和认证信息（本地和云端的区别只是地址�?key�?
+        # 读取 URL 和认证信息（本地和云端的区别只是地址和 key）
         if self._mode == "cloud":
             self._url = os.getenv("RERANK_CLOUD_URL", "https://api.siliconflow.cn/v1/rerank").rstrip("/")
             self._api_key = os.getenv("RERANK_CLOUD_API_KEY", "")
@@ -218,7 +218,7 @@ class RerankAPI:
 
     def rerank(self, query: str, documents: list[str]) -> tuple[list[float], list[int]]:
         """
-        同步重排 �?本地和云端统一调用方式
+        同步重排 — 本地和云端统一调用方式
         返回: (scores, indices)
         """
         if not self._enabled:
@@ -227,12 +227,12 @@ class RerankAPI:
         t0 = time.time()
         import httpx
 
-        # 拼接 URL（对齐云端格�?/v1/rerank�?
+        # 拼接 URL（对齐云端格式 /v1/rerank）
         url = self._url
         if not url.endswith("/rerank"):
             url = url + "/rerank"
 
-        # 统一请求格式（本�?server 和云�?API 接受相同的格式）
+        # 统一请求格式（本地 server 和云端 API 接受相同的格式）
         payload = {
             "model": self._model,
             "query": query,
@@ -248,7 +248,7 @@ class RerankAPI:
             r.raise_for_status()
             data = r.json()
 
-        # 统一响应解析（本�?server 和云�?API 返回相同的格式）
+        # 统一响应解析（本地 server 和云端 API 返回相同的格式）
         if "results" in data:
             scores = [item["relevance_score"] for item in data["results"]]
             indices = [item["index"] for item in data["results"]]
@@ -260,7 +260,7 @@ class RerankAPI:
             indices = [i for i, _ in top_k]
             scores = [s for _, s in top_k]
         else:
-            raise ValueError(f"未知�?rerank 响应格式: {list(data.keys())}")
+            raise ValueError(f"未知的 rerank 响应格式: {list(data.keys())}")
 
         elapsed = time.time() - t0
         top_scores = [f"{s:.2f}" for s in scores[:3]]
@@ -272,9 +272,9 @@ class RerankAPI:
         return await asyncio.to_thread(self.rerank, query, documents)
 
     def health_check(self) -> tuple[bool, str]:
-        """健康检�?""
+        """健康检查"""
         if not self._enabled:
-            return True, "未启�?
+            return True, "未启用"
         try:
             import httpx
             headers = {}
@@ -284,7 +284,7 @@ class RerankAPI:
                 r = c.get(f"{self._url}/health", headers=headers)
                 if r.status_code == 200:
                     return True, ""
-                # 云端模式�?04 也算在线（云端没�?/health 端点�?
+                # 云端模式 404 也算在线（云端没有 /health 端点）
                 if self._mode == "cloud":
                     return True, ""
                 return False, f"状态码 {r.status_code}"
