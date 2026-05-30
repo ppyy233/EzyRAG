@@ -1,7 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
 """
-Ezy-RAG 鈥?CLI 鍏叡閫昏緫
-鎻愪緵鏈嶅姟鐘舵€佹娴嬨€佹暟鎹簱杩炴帴銆佹枃妗ｇ鐞嗙瓑鍏变韩鍔熻兘
+Ezy-RAG — CLI 公共逻辑
+提供服务状态检测、数据库连接、文档管理等共享功能
 """
 import os
 import sys
@@ -16,19 +16,19 @@ load_dotenv(ROOT / "config" / ".env")
 
 
 def check_port(host: str, port: int) -> bool:
-    """妫€鏌ョ鍙ｆ槸鍚﹀彲杩炴帴"""
+    """检查端口是否可连接"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
         result = sock.connect_ex((host, port))
         sock.close()
         return result == 0
-    except:
+    except Exception:
         return False
 
 
 def get_service_status() -> dict:
-    """鑾峰彇鎵€鏈夋湇鍔＄姸鎬侊紙璋冪敤core妯″潡锛?""
+    """获取所有服务状态（调用 core 模块）"""
     from core.api import EmbeddingAPI, RerankAPI
     
     chroma_host = os.getenv("CHROMA_SERVER_HOST", "127.0.0.1")
@@ -36,11 +36,14 @@ def get_service_status() -> dict:
     mcp_host = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
     mcp_port = int(os.getenv("MCP_SERVER_PORT", "9766"))
     
-    # ChromaDB 鐘舵€?    chroma_online = check_port(chroma_host, chroma_port)
+    # ChromaDB 状态
+    chroma_online = check_port(chroma_host, chroma_port)
     
-    # MCP 鐘舵€?    mcp_online = check_port(mcp_host, mcp_port)
+    # MCP 状态
+    mcp_online = check_port(mcp_host, mcp_port)
     
-    # Embedding 鐘舵€?    try:
+    # Embedding 状态
+    try:
         emb_api = EmbeddingAPI()
         emb_info = emb_api.get_info()
         emb_ok, emb_err = emb_api.health_check()
@@ -51,9 +54,10 @@ def get_service_status() -> dict:
             "info": f"{emb_info['mode']} ({emb_info['model']})"
         }
     except Exception as e:
-        embedding = {"online": False, "mode": "unknown", "model": "", "info": f"閿欒: {e}"}
+        embedding = {"online": False, "mode": "unknown", "model": "", "info": f"错误: {e}"}
     
-    # Rerank 鐘舵€?    try:
+    # Rerank 状态
+    try:
         rerank_api = RerankAPI()
         rerank_info = rerank_api.get_info()
         rerank_enabled = rerank_info["enabled"]
@@ -67,9 +71,9 @@ def get_service_status() -> dict:
                 "info": f"{rerank_info['mode']} ({rerank_info['model']})"
             }
         else:
-            rerank = {"online": False, "enabled": False, "mode": "disabled", "model": "", "info": "鏈惎鐢?, "skip": True}
+            rerank = {"online": False, "enabled": False, "mode": "disabled", "model": "", "info": "未启用", "skip": True}
     except Exception as e:
-        rerank = {"online": False, "enabled": False, "mode": "unknown", "model": "", "info": f"閿欒: {e}"}
+        rerank = {"online": False, "enabled": False, "mode": "unknown", "model": "", "info": f"错误: {e}"}
     
     return {
         "chromadb": {"online": chroma_online, "host": chroma_host, "port": chroma_port, "info": f":{chroma_port}"},
@@ -80,7 +84,7 @@ def get_service_status() -> dict:
 
 
 def connect_chroma():
-    """杩炴帴 ChromaDB锛岃繑鍥?(client, db)"""
+    """连接 ChromaDB，返回 (client, db)"""
     import chromadb
     from core.api import EmbeddingAPI
     from core.database import DocumentDatabase
@@ -98,7 +102,8 @@ def connect_chroma():
     
     try:
         collection = client.get_collection(name=collection_name)
-        collection.count()  # 楠岃瘉瀹屾暣鎬?    except:
+        collection.count()  # 验证完整性
+    except Exception:
         from config.settings import get_hnsw_config
         hnsw_config = get_hnsw_config()
         metadata = {
@@ -118,13 +123,13 @@ def connect_chroma():
 
 
 def get_local_documents(source: str = "all") -> list:
-    """鑾峰彇鏈湴鏂囨。鍒楄〃
+    """获取本地文档列表
     
     Args:
         source: "all" | "docs" | "web"
         
     Returns:
-        鏂囨。璺緞鍒楄〃
+        文档路径列表
     """
     from core.document import SUPPORTED_EXT
     
@@ -150,7 +155,7 @@ def get_local_documents(source: str = "all") -> list:
 
 
 def get_database_stats() -> dict:
-    """鑾峰彇鏁版嵁搴撶粺璁′俊鎭?""
+    """获取数据库统计信息"""
     from core.document import SUPPORTED_EXT
     
     stats = {
@@ -161,38 +166,39 @@ def get_database_stats() -> dict:
         "collection": ""
     }
     
-    # 缁熻鏈湴鏂囨。
+    # 统计本地文档
     docs_dir = ROOT / "data" / "docs"
     if docs_dir.exists():
         stats["docs_count"] = sum(1 for ext in SUPPORTED_EXT 
                                   for f in docs_dir.glob(f"**/*{ext}") 
                                   if f.is_file())
     
-    # 缁熻缃戦〉鏂囨。
+    # 统计网页文档
     web_dir = ROOT / "data" / "web"
     if web_dir.exists():
         stats["web_count"] = sum(1 for f in web_dir.glob("*.txt") if f.is_file())
     
-    # 鍚戦噺搴撲俊鎭?    try:
+    # 向量库信息
+    try:
         _, db = connect_chroma()
         vector_docs = db.list_documents()
         stats["vector_docs"] = len(vector_docs)
         stats["chunks"] = db.count()
         stats["collection"] = db.collection_name
-    except:
+    except Exception:
         pass
     
     return stats
 
 
 def get_document_list(source: str = "all") -> list:
-    """鑾峰彇鏂囨。鍒楄〃锛堝悎骞舵湰鍦板拰鍚戦噺搴撲俊鎭級
+    """获取文档列表（合并本地和向量库信息）
     
     Args:
         source: "all" | "docs" | "web"
         
     Returns:
-        鏂囨。淇℃伅鍒楄〃
+        文档信息列表
     """
     local_docs = get_local_documents(source)
     
@@ -200,7 +206,7 @@ def get_document_list(source: str = "all") -> list:
     try:
         _, db = connect_chroma()
         vector_docs = db.list_documents()
-    except:
+    except Exception:
         pass
     
     local_paths = {d for d in local_docs}
@@ -209,7 +215,7 @@ def get_document_list(source: str = "all") -> list:
     result = []
     for doc_path in local_docs:
         doc_name = Path(doc_path).name
-        # 鍒ゆ柇鏉ユ簮鐩綍
+        # 判断来源目录
         source_dir = "web" if "\\data\\web\\" in doc_path or "/data/web/" in doc_path else "docs"
         
         if doc_path in vector_map:
@@ -232,7 +238,8 @@ def get_document_list(source: str = "all") -> list:
                 "content_hash": "",
             })
     
-    # 瀛ょ珛璁板綍锛堝悜閲忓簱鏈変絾鏈湴娌℃湁锛?    for doc in vector_docs:
+    # 孤立记录（向量库有但本地没有）
+    for doc in vector_docs:
         if doc["source"] not in local_paths and doc.get("source_type") == "local_file":
             source_dir = "web" if "\\data\\web\\" in doc["source"] or "/data/web/" in doc["source"] else "docs"
             result.append({
@@ -248,5 +255,5 @@ def get_document_list(source: str = "all") -> list:
 
 
 def reload_env():
-    """閲嶆柊鍔犺浇鐜鍙橀噺"""
+    """重新加载环境变量"""
     load_dotenv(ROOT / "config" / ".env", override=True)

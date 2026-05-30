@@ -14,17 +14,23 @@
       </template>
       
       <el-form :model="config" label-width="150px">
-        <el-form-item label="Embedding 服务地址">
-          <el-input v-model="config.EMBEDDING_API_URL" placeholder="http://127.0.0.1:5000/v1/embeddings" />
+        <el-form-item label="Embedding 模式">
+          <el-select v-model="config.EMBEDDING_MODE">
+            <el-option label="云端" value="cloud" />
+            <el-option label="本地" value="local" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Embedding 云端 URL">
+          <el-input v-model="config.EMBEDDING_CLOUD_URL" placeholder="https://api.siliconflow.cn/v1/embeddings" />
         </el-form-item>
         <el-form-item label="Embedding API Key">
-          <el-input v-model="config.EMBEDDING_API_KEY" type="password" placeholder="可选" />
+          <el-input v-model="config.EMBEDDING_CLOUD_API_KEY" type="password" placeholder="可选" />
         </el-form-item>
         <el-form-item label="Embedding 模型">
-          <el-input v-model="config.EMBEDDING_MODEL" placeholder="text-embedding-qwen3-embedding-4b" />
+          <el-input v-model="config.EMBEDDING_CLOUD_MODEL" placeholder="BAAI/bge-m3" />
         </el-form-item>
         <el-form-item label="Embedding 维度">
-          <el-input-number v-model="config.EMBEDDING_DIM" :min="1" :max="4096" />
+          <el-input-number v-model="config.EMBEDDING_CLOUD_DIM" :min="1" :max="4096" />
         </el-form-item>
         
         <el-divider />
@@ -33,13 +39,13 @@
           <el-switch v-model="config.RERANK_ENABLED" />
         </el-form-item>
         <el-form-item label="Rerank 服务地址">
-          <el-input v-model="config.RERANK_API_URL" placeholder="http://127.0.0.1:5001" />
+          <el-input v-model="config.RERANK_CLOUD_URL" placeholder="https://api.siliconflow.cn/v1/rerank" />
         </el-form-item>
         <el-form-item label="Rerank API Key">
-          <el-input v-model="config.RERANK_API_KEY" type="password" placeholder="可选" />
+          <el-input v-model="config.RERANK_CLOUD_API_KEY" type="password" placeholder="可选" />
         </el-form-item>
         <el-form-item label="Rerank 模型">
-          <el-input v-model="config.RERANK_MODEL" placeholder="远程 API 需要，本地服务可留空" />
+          <el-input v-model="config.RERANK_CLOUD_MODEL" placeholder="BAAI/bge-reranker-v2-m3" />
         </el-form-item>
         
         <el-divider />
@@ -105,14 +111,15 @@ import { getConfig, saveConfig as saveConfigApi } from '../api'
 import { ElMessage } from 'element-plus'
 
 const config = ref({
-  EMBEDDING_API_URL: 'http://127.0.0.1:5000/v1/embeddings',
-  EMBEDDING_API_KEY: '',
-  EMBEDDING_MODEL: 'text-embedding-qwen3-embedding-4b',
-  EMBEDDING_DIM: 2560,
+  EMBEDDING_MODE: 'cloud',
+  EMBEDDING_CLOUD_URL: 'https://api.siliconflow.cn/v1/embeddings',
+  EMBEDDING_CLOUD_API_KEY: '',
+  EMBEDDING_CLOUD_MODEL: 'BAAI/bge-m3',
+  EMBEDDING_CLOUD_DIM: 1024,
   RERANK_ENABLED: true,
-  RERANK_API_URL: 'http://127.0.0.1:5001',
-  RERANK_API_KEY: '',
-  RERANK_MODEL: '',
+  RERANK_CLOUD_URL: 'https://api.siliconflow.cn/v1/rerank',
+  RERANK_CLOUD_API_KEY: '',
+  RERANK_CLOUD_MODEL: 'BAAI/bge-reranker-v2-m3',
   CHROMA_SERVER_HOST: '127.0.0.1',
   CHROMA_SERVER_PORT: 9898,
   MCP_SERVER_HOST: '127.0.0.1',
@@ -136,14 +143,15 @@ const loadConfig = async () => {
     if (response.status === 'success') {
       const env = response.data.env || {}
       config.value = {
-        EMBEDDING_API_URL: env.EMBEDDING_API_URL || config.value.EMBEDDING_API_URL,
-        EMBEDDING_API_KEY: env.EMBEDDING_API_KEY || '',
-        EMBEDDING_MODEL: env.EMBEDDING_MODEL || config.value.EMBEDDING_MODEL,
-        EMBEDDING_DIM: parseInt(env.EMBEDDING_DIM) || config.value.EMBEDDING_DIM,
+        EMBEDDING_MODE: env.EMBEDDING_MODE || config.value.EMBEDDING_MODE,
+        EMBEDDING_CLOUD_URL: env.EMBEDDING_CLOUD_URL || config.value.EMBEDDING_CLOUD_URL,
+        EMBEDDING_CLOUD_API_KEY: env.EMBEDDING_CLOUD_API_KEY || '',
+        EMBEDDING_CLOUD_MODEL: env.EMBEDDING_CLOUD_MODEL || config.value.EMBEDDING_CLOUD_MODEL,
+        EMBEDDING_CLOUD_DIM: parseInt(env.EMBEDDING_CLOUD_DIM) || config.value.EMBEDDING_CLOUD_DIM,
         RERANK_ENABLED: env.RERANK_ENABLED === 'true',
-        RERANK_API_URL: env.RERANK_API_URL || config.value.RERANK_API_URL,
-        RERANK_API_KEY: env.RERANK_API_KEY || '',
-        RERANK_MODEL: env.RERANK_MODEL || '',
+        RERANK_CLOUD_URL: env.RERANK_CLOUD_URL || config.value.RERANK_CLOUD_URL,
+        RERANK_CLOUD_API_KEY: env.RERANK_CLOUD_API_KEY || '',
+        RERANK_CLOUD_MODEL: env.RERANK_CLOUD_MODEL || '',
         CHROMA_SERVER_HOST: env.CHROMA_SERVER_HOST || config.value.CHROMA_SERVER_HOST,
         CHROMA_SERVER_PORT: parseInt(env.CHROMA_SERVER_PORT) || config.value.CHROMA_SERVER_PORT,
         MCP_SERVER_HOST: env.MCP_SERVER_HOST || config.value.MCP_SERVER_HOST,
@@ -162,14 +170,15 @@ const saveConfig = async () => {
   loading.value = true
   try {
     const env = {
-      EMBEDDING_API_URL: config.value.EMBEDDING_API_URL,
-      EMBEDDING_API_KEY: config.value.EMBEDDING_API_KEY,
-      EMBEDDING_MODEL: config.value.EMBEDDING_MODEL,
-      EMBEDDING_DIM: String(config.value.EMBEDDING_DIM),
+      EMBEDDING_MODE: config.value.EMBEDDING_MODE,
+      EMBEDDING_CLOUD_URL: config.value.EMBEDDING_CLOUD_URL,
+      EMBEDDING_CLOUD_API_KEY: config.value.EMBEDDING_CLOUD_API_KEY,
+      EMBEDDING_CLOUD_MODEL: config.value.EMBEDDING_CLOUD_MODEL,
+      EMBEDDING_CLOUD_DIM: String(config.value.EMBEDDING_CLOUD_DIM),
       RERANK_ENABLED: String(config.value.RERANK_ENABLED),
-      RERANK_API_URL: config.value.RERANK_API_URL,
-      RERANK_API_KEY: config.value.RERANK_API_KEY,
-      RERANK_MODEL: config.value.RERANK_MODEL,
+      RERANK_CLOUD_URL: config.value.RERANK_CLOUD_URL,
+      RERANK_CLOUD_API_KEY: config.value.RERANK_CLOUD_API_KEY,
+      RERANK_CLOUD_MODEL: config.value.RERANK_CLOUD_MODEL,
       CHROMA_SERVER_HOST: config.value.CHROMA_SERVER_HOST,
       CHROMA_SERVER_PORT: String(config.value.CHROMA_SERVER_PORT),
       MCP_SERVER_HOST: config.value.MCP_SERVER_HOST,
@@ -200,14 +209,15 @@ const saveCustomChunk = async () => {
     })
     const cfg = {
       env: {
-        EMBEDDING_API_URL: config.value.EMBEDDING_API_URL,
-        EMBEDDING_API_KEY: config.value.EMBEDDING_API_KEY,
-        EMBEDDING_MODEL: config.value.EMBEDDING_MODEL,
-        EMBEDDING_DIM: String(config.value.EMBEDDING_DIM),
+        EMBEDDING_MODE: config.value.EMBEDDING_MODE,
+        EMBEDDING_CLOUD_URL: config.value.EMBEDDING_CLOUD_URL,
+        EMBEDDING_CLOUD_API_KEY: config.value.EMBEDDING_CLOUD_API_KEY,
+        EMBEDDING_CLOUD_MODEL: config.value.EMBEDDING_CLOUD_MODEL,
+        EMBEDDING_CLOUD_DIM: String(config.value.EMBEDDING_CLOUD_DIM),
         RERANK_ENABLED: String(config.value.RERANK_ENABLED),
-        RERANK_API_URL: config.value.RERANK_API_URL,
-        RERANK_API_KEY: config.value.RERANK_API_KEY,
-        RERANK_MODEL: config.value.RERANK_MODEL,
+        RERANK_CLOUD_URL: config.value.RERANK_CLOUD_URL,
+        RERANK_CLOUD_API_KEY: config.value.RERANK_CLOUD_API_KEY,
+        RERANK_CLOUD_MODEL: config.value.RERANK_CLOUD_MODEL,
         CHROMA_SERVER_HOST: config.value.CHROMA_SERVER_HOST,
         CHROMA_SERVER_PORT: String(config.value.CHROMA_SERVER_PORT),
         MCP_SERVER_HOST: config.value.MCP_SERVER_HOST,

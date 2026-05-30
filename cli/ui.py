@@ -1,10 +1,11 @@
 ﻿# -*- coding: utf-8 -*-
 """
-Ezy-RAG 鈥?缁堢 UI 宸ュ叿搴?鍙傝€冨墠绔璁＄殑绠€娲佺粓绔氦浜掔粍浠?"""
+Ezy-RAG — 终端 UI 工具库
+参考前端设计的简洁终端交互组件"""
 
 
 def header(title: str, desc: str = ""):
-    """鎵撳嵃椤甸潰鏍囬"""
+    """打印页面标题"""
     print("\n" + "=" * 50)
     print(f"  {title}")
     if desc:
@@ -13,10 +14,11 @@ def header(title: str, desc: str = ""):
 
 
 def status_card(services: list):
-    """鎵撳嵃鏈嶅姟鐘舵€佸崱鐗?    
+    """打印服务状态卡片
+    
     services: [{"name": "ChromaDB", "online": True, "info": ":9898"}, ...]
     """
-    print("\n  鏈嶅姟鐘舵€?")
+    print("\n  服务状态:")
     print("  " + "-" * 46)
     for svc in services:
         icon = "[OK]" if svc.get("online") else ("[ -]" if svc.get("skip") else "[!!]")
@@ -27,7 +29,7 @@ def status_card(services: list):
 
 
 def info_card(title: str, items: dict):
-    """鎵撳嵃淇℃伅鍗＄墖
+    """打印信息卡片
     
     items: {"key": "value", ...}
     """
@@ -39,32 +41,34 @@ def info_card(title: str, items: dict):
 
 
 def table(headers: list, rows: list, max_width: int = 80):
-    """鎵撳嵃琛ㄦ牸
+    """打印表格
     
-    headers: ["鍒?", "鍒?"]
-    rows: [["鍊?", "鍊?"], ...]
+    headers: ["列1", "列2"]
+    rows: [["值1", "值2"], ...]
     """
     if not rows:
-        print("\n  (绌?")
+        print("\n  (空)")
         return
     
-    # 璁＄畻鍒楀
+    # 计算列宽
     widths = [len(h) for h in headers]
     for row in rows:
         for i, cell in enumerate(row):
             widths[i] = max(widths[i], len(str(cell)))
     
-    # 闄愬埗鎬诲搴?    total = sum(widths) + 3 * (len(widths) - 1)
+    # 限制总宽度
+    total = sum(widths) + 3 * (len(widths) - 1)
     if total > max_width:
         ratio = (max_width - 3 * (len(widths) - 1)) / sum(widths)
         widths = [max(8, int(w * ratio)) for w in widths]
     
-    # 鎵撳嵃琛ㄥご
+    # 打印表头
     header_line = " | ".join(h.ljust(widths[i]) for i, h in enumerate(headers))
     print(f"\n  {header_line}")
     print("  " + "-" * len(header_line))
     
-    # 鎵撳嵃琛?    for row in rows:
+    # 打印行
+    for row in rows:
         cells = []
         for i, cell in enumerate(row):
             s = str(cell)
@@ -75,44 +79,44 @@ def table(headers: list, rows: list, max_width: int = 80):
 
 
 def log_ok(message: str):
-    """鎴愬姛鏃ュ織"""
-    print(f"  鉁?{message}")
+    """成功日志"""
+    print(f"  ✓ {message}")
 
 
 def log_error(message: str):
-    """閿欒鏃ュ織"""
-    print(f"  鉁?{message}")
+    """错误日志"""
+    print(f"  ✗ {message}")
 
 
 def log_warn(message: str):
-    """璀﹀憡鏃ュ織"""
-    print(f"  鈿?{message}")
+    """警告日志"""
+    print(f"  ⚡ {message}")
 
 
 def log_info(message: str):
-    """淇℃伅鏃ュ織"""
-    print(f"  鈩?{message}")
+    """信息日志"""
+    print(f"  ℹ {message}")
 
 
 def log_step(message: str):
-    """姝ラ鏃ュ織"""
-    print(f"\n  鈫?{message}")
+    """步骤日志"""
+    print(f"\n  ➤ {message}")
 
 
 def confirm(message: str, default: bool = False) -> bool:
-    """纭瀵硅瘽妗?""
+    """确认对话框"""
     hint = "Y/n" if default else "y/N"
     choice = input(f"\n  {message} ({hint}): ").strip().lower()
     if not choice:
         return default
-    return choice in ("y", "yes", "鏄?)
+    return choice in ("y", "yes", "是")
 
 
 def menu(title: str, options: list) -> int:
-    """鑿滃崟閫夋嫨
+    """菜单选择
     
-    options: ["閫夐」1", "閫夐」2", ...]
-    杩斿洖: 閫夋嫨鐨勭储寮?(1-based)锛?琛ㄧず閫€鍑?杩斿洖
+    options: ["选项1", "选项2", ...]
+    返回: 选择的索引 (1-based)，0 表示退出/返回
     """
     print(f"\n  {title}:")
     print("  " + "-" * 46)
@@ -122,63 +126,63 @@ def menu(title: str, options: list) -> int:
     
     while True:
         try:
-            choice = input("  璇烽€夋嫨: ").strip()
+            choice = input("  请选择: ").strip()
             if not choice:
                 continue
             num = int(choice)
             if 1 <= num <= len(options):
                 return num
-            print(f"  璇疯緭鍏?1-{len(options)}")
+            print(f"  请输入 1-{len(options)}")
         except ValueError:
-            print("  璇疯緭鍏ユ暟瀛?)
+            print("  请输入数字")
 
 
 def menu_with_back(title: str, options: list) -> int:
-    """甯﹁繑鍥為€夐」鐨勮彍鍗?""
-    all_options = options + ["杩斿洖"]
+    """带返回选项的菜单"""
+    all_options = options + ["返回"]
     return menu(title, all_options)
 
 
 def pause():
-    """鏆傚仠绛夊緟鐢ㄦ埛杈撳叆"""
-    input("\n  鎸?Enter 缁х画...")
+    """暂停等待用户输入"""
+    input("\n  按 Enter 继续...")
 
 
 def clear():
-    """娓呭睆"""
+    """清屏"""
     import os
     os.system("cls" if os.name == "nt" else "clear")
 
 
 def print_separator():
-    """鎵撳嵃鍒嗛殧绾?""
+    """打印分隔线"""
     print("  " + "-" * 46)
 
 
 def progress_bar(current: int, total: int, prefix: str = "", suffix: str = ""):
-    """杩涘害鏉?""
+    """进度条"""
     if total == 0:
         return
     percent = current / total
     bar_length = 30
     filled = int(bar_length * percent)
-    bar = "鈻? * filled + "鈻? * (bar_length - filled)
+    bar = "█" * filled + "░" * (bar_length - filled)
     print(f"\r  {prefix} [{bar}] {current}/{total} {suffix}", end="", flush=True)
     if current == total:
-        print()  # 瀹屾垚鏃舵崲琛?
+        print()  # 完成时换行
 
-def select_data_source(prompt: str = "閫夋嫨鏁版嵁婧?) -> str:
-    """鏁版嵁婧愰€夋嫨浜や簰
+def select_data_source(prompt: str = "选择数据源") -> str:
+    """数据源选择交互
     
     Args:
-        prompt: 鎻愮ず淇℃伅
+        prompt: 提示信息
         
     Returns:
         "all" | "docs" | "web"
     """
     choice = menu(prompt, [
-        "鎵€鏈夋暟鎹?(docs + web)",
-        "浠呮湰鍦版枃妗?(docs)",
-        "浠呯綉椤垫暟鎹?(web)"
+        "所有数据 (docs + web)",
+        "仅本地文档 (docs)",
+        "仅网页数据 (web)"
     ])
     return ["all", "docs", "web"][choice - 1]

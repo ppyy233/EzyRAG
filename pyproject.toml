@@ -1,6 +1,6 @@
 [project]
 name = "ezy-rag"
-version = "0.0.18"
+version = "1.0.0"
 description = "Ezy-RAG 知识库系统"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

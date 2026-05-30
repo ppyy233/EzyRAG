@@ -1,66 +1,66 @@
 ﻿# -*- coding: utf-8 -*-
 """
-Ezy-RAG 鈥?閰嶇疆鍔犺浇妯″潡
-浣嶄簬 config/ 鐩綍涓嬶紝璐熻矗鍔犺浇 .env 鍜?config.json
+Ezy-RAG — 配置加载模块
+位于 config/ 目录下，负责加载 .env 和 config.json
 """
 import os
 import json
 from pathlib import Path
 from dotenv import load_dotenv
 
-# 閰嶇疆鏂囦欢璺緞
+# 配置文件路径
 CONFIG_DIR = Path(__file__).parent
 ENV_FILE = CONFIG_DIR / ".env"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-# 鍔犺浇 .env
+# 加载 .env
 if not ENV_FILE.exists():
-    raise FileNotFoundError(f"閰嶇疆鏂囦欢 {ENV_FILE} 涓嶅瓨鍦紝璇疯繍琛? python init.py")
+    raise FileNotFoundError(f"配置文件 {ENV_FILE} 不存在，请运行 python init.py")
 load_dotenv(ENV_FILE)
 
-# 鍔犺浇 config.json
+# 加载 config.json
 if not CONFIG_FILE.exists():
-    raise FileNotFoundError(f"閰嶇疆鏂囦欢 {CONFIG_FILE} 涓嶅瓨鍦紝璇疯繍琛? python init.py")
+    raise FileNotFoundError(f"配置文件 {CONFIG_FILE} 不存在，请运行 python init.py")
 
 
 def load_config() -> dict:
-    """鍔犺浇 config.json"""
+    """加载 config.json"""
     with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
 def save_config(config: dict):
-    """淇濆瓨 config.json"""
+    """保存 config.json"""
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
 
 def get_collection_name() -> str:
-    """鑾峰彇闆嗗悎鍚嶇О"""
+    """获取集合名称"""
     config = load_config()
     return config["collection"]["name"]
 
 
 def get_docs_dir() -> str:
-    """鑾峰彇鏂囨。鐩綍"""
+    """获取文档目录"""
     config = load_config()
     return config["docs"]["dir"]
 
 
 def get_web_dir() -> str:
-    """鑾峰彇缃戦〉鏁版嵁鐩綍"""
+    """获取网页数据目录"""
     config = load_config()
     return config.get("web", {}).get("dir", "data/web")
 
 
 def get_chroma_dir() -> str:
-    """鑾峰彇 ChromaDB 鏁版嵁鐩綍"""
+    """获取 ChromaDB 数据目录"""
     config = load_config()
     return config["chroma"]["dir"]
 
 
 def get_chunk_config(template_name: str = None) -> dict:
-    """鑾峰彇鍒囩墖妯℃澘閰嶇疆"""
+    """获取切片模板配置"""
     config = load_config()
     default_template = config["chunk"]["default_template"]
     name = template_name or os.getenv("CHUNK_TEMPLATE", default_template)
@@ -72,13 +72,13 @@ def get_chunk_config(template_name: str = None) -> dict:
 
 
 def get_chunk_templates() -> dict:
-    """鑾峰彇鎵€鏈夊垏鐗囨ā鏉?""
+    """获取所有切片模板"""
     config = load_config()
     return config["chunk"]["templates"]
 
 
 def get_hnsw_config() -> dict:
-    """鑾峰彇 HNSW 绱㈠紩閰嶇疆"""
+    """获取 HNSW 索引配置"""
     config = load_config()
     defaults = {
         "space": "cosine",
@@ -89,7 +89,7 @@ def get_hnsw_config() -> dict:
         "batch_size": 100,
     }
     hnsw = config.get("hnsw", {})
-    # 鍚堝苟榛樿鍊?
+    # 合并默认值
     for key, value in defaults.items():
         if key not in hnsw:
             hnsw[key] = value
@@ -97,18 +97,18 @@ def get_hnsw_config() -> dict:
 
 
 def get_retrieval_config() -> dict:
-    """鑾峰彇妫€绱㈤厤缃?""
+    """获取检索配置"""
     config = load_config()
     return config["retrieval"]
 
 
 def get_embedding_mode() -> str:
-    """鑾峰彇 Embedding 妯″紡锛歭ocal / cloud"""
+    """获取 Embedding 模式：local / cloud"""
     return os.getenv("EMBEDDING_MODE", "cloud").lower()
 
 
 def get_embedding_config() -> dict:
-    """鑾峰彇 Embedding 閰嶇疆"""
+    """获取 Embedding 配置"""
     mode = get_embedding_mode()
 
     if mode == "local":
@@ -134,17 +134,17 @@ def get_embedding_config() -> dict:
 
 
 def get_rerank_mode() -> str:
-    """鑾峰彇 Rerank 妯″紡锛歭ocal / cloud"""
+    """获取 Rerank 模式：local / cloud"""
     return os.getenv("RERANK_MODE", "cloud").lower()
 
 
 def get_rerank_enabled() -> bool:
-    """鑾峰彇 Rerank 鏄惁鍚敤"""
+    """获取 Rerank 是否启用"""
     return os.getenv("RERANK_ENABLED", "true").lower() == "true"
 
 
 def get_rerank_config() -> dict:
-    """鑾峰彇 Rerank 閰嶇疆"""
+    """获取 Rerank 配置"""
     mode = get_rerank_mode()
 
     if mode == "local":

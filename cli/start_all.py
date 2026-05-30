@@ -1,7 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
 """
-Ezy-RAG 鈥?鏈嶅姟绠＄悊
-鍙傝€冨墠绔璁＄殑绠€娲佹湇鍔＄鐞嗙晫闈?"""
+Ezy-RAG — 服务管理
+参考前端设计的简洁服务管理界面"""
 import os
 import sys
 import subprocess
@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 from cli.ui import header, status_card, menu, confirm, log_ok, log_error, log_info, log_step
 from cli.cli_core import check_port, get_service_status, reload_env
 
-# 鏈嶅姟妯″潡鏄犲皠
+# 服务模块映射
 SERVICE_MODULES = {
     "chromadb": "servers.chroma",
     "embedding": "servers.embedding",
@@ -24,7 +24,7 @@ SERVICE_MODULES = {
 
 
 def get_services_display() -> list:
-    """鑾峰彇鏈嶅姟鐘舵€佹樉绀烘暟鎹?""
+    """获取服务状态显示数据"""
     status = get_service_status()
     return [
         {"name": "ChromaDB", "online": status["chromadb"]["online"], "info": status["chromadb"]["info"]},
@@ -35,25 +35,25 @@ def get_services_display() -> list:
 
 
 def start_service(name: str) -> bool:
-    """鍚姩鍗曚釜鏈嶅姟"""
+    """启动单个服务"""
     key = name.lower()
     module = SERVICE_MODULES.get(key)
     if not module:
-        log_error(f"鏈煡鏈嶅姟: {name}")
+        log_error(f"未知服务: {name}")
         return False
     
     status = get_service_status()
     svc = status.get(key, {})
     
     if svc.get("online"):
-        log_info(f"{name} 宸插湪杩愯")
+        log_info(f"{name} 已在运行")
         return True
     
     if svc.get("skip"):
-        log_info(f"{name} 鏈惎鐢紝璺宠繃")
+        log_info(f"{name} 未启用，跳过")
         return True
     
-    log_step(f"鍚姩 {name}...")
+    log_step(f"启动 {name}...")
     try:
         subprocess.Popen(
             [sys.executable, "-m", module],
@@ -62,21 +62,22 @@ def start_service(name: str) -> bool:
         )
         time.sleep(2)
         
-        # 妫€鏌ユ槸鍚﹀惎鍔ㄦ垚鍔?        status = get_service_status()
+        # 检查是否启动成功
+        status = get_service_status()
         if status.get(key, {}).get("online"):
-            log_ok(f"{name} 鍚姩鎴愬姛")
+            log_ok(f"{name} 启动成功")
             return True
         else:
-            log_error(f"{name} 鍚姩瓒呮椂")
+            log_error(f"{name} 启动超时")
             return False
     except Exception as e:
-        log_error(f"{name} 鍚姩澶辫触: {e}")
+        log_error(f"{name} 启动失败: {e}")
         return False
 
 
 def stop_service_by_port(name: str, port: int) -> bool:
-    """閫氳繃绔彛鍋滄鏈嶅姟"""
-    log_step(f"鍋滄 {name}...")
+    """通过端口停止服务"""
+    log_step(f"停止 {name}...")
     try:
         if sys.platform == 'win32':
             result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
@@ -84,45 +85,45 @@ def stop_service_by_port(name: str, port: int) -> bool:
                 if f":{port}" in line and "LISTENING" in line:
                     pid = line.split()[-1]
                     subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
-                    log_ok(f"{name} 宸插仠姝?)
+                    log_ok(f"{name} 已停止")
                     return True
         else:
             result = subprocess.run(["lsof", "-i", f":{port}", "-t"], capture_output=True, text=True)
             if result.stdout.strip():
                 pid = result.stdout.strip().split('\n')[0]
                 os.kill(int(pid), 15)
-                log_ok(f"{name} 宸插仠姝?)
+                log_ok(f"{name} 已停止")
                 return True
-        log_info(f"{name} 鏈湪杩愯")
+        log_info(f"{name} 未在运行")
         return False
     except Exception as e:
-        log_error(f"{name} 鍋滄澶辫触: {e}")
+        log_error(f"{name} 停止失败: {e}")
         return False
 
 
 def start_all():
-    """鍚姩鎵€鏈夋湇鍔?""
+    """启动所有服务"""
     status = get_service_status()
     
-    # 鍚姩 ChromaDB
+    # 启动 ChromaDB
     if not status["chromadb"]["online"]:
         start_service("chromadb")
     
-    # 鍚姩 Embedding (浠呮湰鍦版ā寮?
+    # 启动 Embedding (仅本地模式)
     if status["embedding"]["mode"] == "local" and not status["embedding"]["online"]:
         start_service("embedding")
     
-    # 鍚姩 Rerank (浠呮湰鍦版ā寮忎笖鍚敤)
+    # 启动 Rerank (仅本地模式且启用)
     if status["rerank"]["enabled"] and status["rerank"]["mode"] == "local" and not status["rerank"]["online"]:
         start_service("rerank")
     
-    # 鍚姩 MCP
+    # 启动 MCP
     if not status["mcp"]["online"]:
         start_service("mcp")
 
 
 def stop_all():
-    """鍋滄鎵€鏈夋湇鍔?""
+    """停止所有服务"""
     status = get_service_status()
     
     if status["chromadb"]["online"]:
@@ -139,25 +140,26 @@ def stop_all():
 
 
 def main():
-    """涓诲嚱鏁?""
+    """主函数"""
     while True:
-        header("Ezy-RAG 鏈嶅姟绠＄悊")
+        header("Ezy-RAG 服务管理")
         
-        # 鏄剧ず鏈嶅姟鐘舵€?        status_card(get_services_display())
+        # 显示服务状态
+        status_card(get_services_display())
         
-        # 鑿滃崟
-        choice = menu("鎿嶄綔", [
-            "鍚姩鍏ㄩ儴",
-            "鍋滄鍏ㄩ儴",
-            "鍒锋柊鐘舵€?,
-            "杩斿洖"
+        # 菜单
+        choice = menu("操作", [
+            "启动全部",
+            "停止全部",
+            "刷新状态",
+            "返回"
         ])
         
         if choice == 1:
-            if confirm("纭畾鍚姩鎵€鏈夋湇鍔★紵"):
+            if confirm("确定启动所有服务？"):
                 start_all()
         elif choice == 2:
-            if confirm("纭畾鍋滄鎵€鏈夋湇鍔★紵"):
+            if confirm("确定停止所有服务？"):
                 stop_all()
         elif choice == 3:
             continue

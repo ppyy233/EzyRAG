@@ -80,18 +80,6 @@
           " ",
           ""
         ]
-      },
-      "ceshiceshi": {
-        "name": "自定义模板 - ceshiceshi",
-        "chunk_size": 100,
-        "overlap": 50,
-        "strategy": "recursive",
-        "separators": [
-          "\n\n",
-          "\n",
-          " ",
-          ""
-        ]
       }
     },
     "default_template": "academic"

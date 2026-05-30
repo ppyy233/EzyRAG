@@ -60,7 +60,8 @@ app.add_middleware(
 )
 
 # ============================================================
-#  WebSocket 管理�?# ============================================================
+#  WebSocket 管理器
+# ============================================================
 
 class ConnectionManager:
     def __init__(self):
@@ -220,14 +221,15 @@ def connect_chroma():
     
     try:
         collection = client.get_collection(name=collection_name)
-        # 验证 HNSW 完整�?        try:
+        # 验证 HNSW 完整性
+        try:
             collection.count()
         except Exception as e:
             if "hnsw" in str(e).lower():
                 _repair_hnsw_index(collection_name)
                 collection = client.get_collection(name=collection_name)
     except:
-        # 从配置获�?HNSW 参数
+        # 从配置获取 HNSW 参数
         hnsw_config = get_hnsw_config()
         metadata = {
             "hnsw:space": hnsw_config["space"],
@@ -256,10 +258,10 @@ def _repair_hnsw_index(collection_name: str):
         seg_dir = chroma_dir / hnsw_seg_id
         if seg_dir.exists():
             shutil.rmtree(str(seg_dir))
-            logger.info(f"修复: 删除损坏�?HNSW 索引 {hnsw_seg_id[:8]}...")
+            logger.info(f"修复: 删除损坏的 HNSW 索引 {hnsw_seg_id[:8]}...")
 
 def get_local_documents(source: str = "all") -> list:
-    """获取本地文档列表（支持数据源过滤�?""
+    """获取本地文档列表（支持数据源过滤）"""
     from core.document import SUPPORTED_EXT
     
     docs_dir = ROOT / "data" / "docs"
@@ -268,7 +270,8 @@ def get_local_documents(source: str = "all") -> list:
     documents = []
     seen = set()
     
-    # 获取 docs 目录的文�?    if source in ("all", "docs") and docs_dir.exists():
+    # 获取 docs 目录的文件
+    if source in ("all", "docs") and docs_dir.exists():
         for ext in SUPPORTED_EXT:
             for f in docs_dir.glob(f"**/*{ext}"):
                 if f.is_file():
@@ -277,7 +280,8 @@ def get_local_documents(source: str = "all") -> list:
                         seen.add(key)
                         documents.append(str(f))
     
-    # 获取 web 目录的文�?    if source in ("all", "web") and web_dir.exists():
+    # 获取 web 目录的文件
+    if source in ("all", "web") and web_dir.exists():
         for ext in SUPPORTED_EXT:
             for f in web_dir.glob(f"**/*{ext}"):
                 if f.is_file():
@@ -289,7 +293,8 @@ def get_local_documents(source: str = "all") -> list:
     return sorted(documents)
 
 # ============================================================
-#  API 端点：系�?# ============================================================
+#  API 端点：系统
+# ============================================================
 
 @app.get("/api/system/health")
 async def health_check():
@@ -321,7 +326,8 @@ async def system_status():
     )
 
 # ============================================================
-#  API 端点：配�?# ============================================================
+#  API 端点：配置
+# ============================================================
 
 @app.get("/api/config")
 async def get_config():
@@ -405,7 +411,7 @@ async def update_config(update: ConfigUpdate):
         
         with open(env_path, 'w', encoding='utf-8') as f:
             f.write("# ============================================================\n")
-            f.write("# Ezy-RAG V1.0.0 �?环境配置\n")
+            f.write("# Ezy-RAG V1.0.0 — 环境配置\n")
             f.write("# ============================================================\n\n")
             
             f.write("# ----- Embedding 配置 -----\n")
@@ -439,7 +445,7 @@ async def update_config(update: ConfigUpdate):
         
         load_dotenv(env_path, override=True)
         
-        return ApiResponse(status="success", message="配置已保存，部分配置需要重启服务生�?)
+        return ApiResponse(status="success", message="配置已保存，部分配置需要重启服务生效")
     except Exception as e:
         return ApiResponse(status="error", message=str(e))
 
@@ -488,10 +494,11 @@ async def update_chunk_config(request: dict):
             if template in config["chunk"]["templates"]:
                 config["chunk"]["default_template"] = template
             else:
-                return ApiResponse(status="error", message=f"模板 {template} 不存�?)
+                return ApiResponse(status="error", message=f"模板 {template} 不存在")
         elif chunk_size is not None and overlap is not None and strategy is not None:
-            # 更新自定义模�?            config["chunk"]["templates"]["custom"] = {
-                "name": "自定义模�?,
+            # 更新自定义模板
+            config["chunk"]["templates"]["custom"] = {
+                "name": "自定义模板",
                 "chunk_size": int(chunk_size),
                 "overlap": int(overlap),
                 "strategy": strategy,
@@ -502,15 +509,16 @@ async def update_chunk_config(request: dict):
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"切片配置已更�? chunk_size={chunk_size}, overlap={overlap}, strategy={strategy}, template={template}")
+        logger.info(f"切片配置已更新: chunk_size={chunk_size}, overlap={overlap}, strategy={strategy}, template={template}")
         
-        return ApiResponse(status="success", message="切片配置已保�?)
+        return ApiResponse(status="success", message="切片配置已保存")
     except Exception as e:
         logger.error(f"更新切片配置失败: {e}")
         return ApiResponse(status="error", message=str(e))
 
 # ============================================================
-#  API 端点：文档管�?# ============================================================
+#  API 端点：文档管理
+# ============================================================
 
 @app.get("/api/documents")
 async def list_documents(source: str = "all"):
@@ -557,13 +565,15 @@ async def list_documents(source: str = "all"):
                     "created_at": ""
                 })
         
-        # 添加孤立记录（根据数据源过滤�?        for doc in vector_docs:
+        # 添加孤立记录（根据数据源过滤）
+        for doc in vector_docs:
             if doc["source"] not in local_set and doc.get("source_type") == "local_file":
                 source_type = "local"
                 if "/data/web/" in doc["source"].replace("\\", "/") or "\\data\\web\\" in doc["source"]:
                     source_type = "web"
                 
-                # 根据数据源过�?                if source == "docs" and source_type != "local":
+                # 根据数据源过滤
+                if source == "docs" and source_type != "local":
                     continue
                 if source == "web" and source_type != "web":
                     continue
@@ -589,7 +599,7 @@ async def import_documents(request: dict):
         
         file_paths = request.get("files", [])
         if not file_paths:
-            return ApiResponse(status="error", message="未指定文�?)
+            return ApiResponse(status="error", message="未指定文件")
         
         _, db = connect_chroma()
         chunk_cfg = get_chunk_config()
@@ -600,7 +610,7 @@ async def import_documents(request: dict):
         for file_path in file_paths:
             full_path = Path(file_path)
             if not full_path.exists():
-                results.append({"file": file_path, "status": "error", "message": "文件不存�?})
+                results.append({"file": file_path, "status": "error", "message": "文件不存在"})
                 continue
             
             ext = full_path.suffix.lower()
@@ -615,7 +625,7 @@ async def import_documents(request: dict):
                     continue
                 
                 doc_name = full_path.stem
-                text = f"[文件�? {doc_name}]\n{text}"
+                text = f"[文件名: {doc_name}]\n{text}"
                 doc = {"path": str(full_path), "text": text}
                 
                 count = db.add(doc, chunk_cfg, source_type="local_file")
@@ -659,7 +669,7 @@ async def import_all_documents():
                     continue
                 
                 doc_name = full_path.stem
-                text = f"[文件�? {doc_name}]\n{text}"
+                text = f"[文件名: {doc_name}]\n{text}"
                 doc = {"path": str(full_path), "text": text}
                 
                 count = db.add(doc, chunk_cfg, source_type="local_file")
@@ -687,7 +697,7 @@ async def delete_document(file_path: str):
         logger.info(f"删除文档: {file_path}")
         db.delete(file_path)
         logger.info(f"删除成功: {file_path}")
-        return ApiResponse(status="success", message=f"已删�? {file_path}")
+        return ApiResponse(status="success", message=f"已删除: {file_path}")
     except Exception as e:
         logger.error(f"删除失败: {file_path}, 错误: {e}")
         return ApiResponse(status="error", message=str(e))
@@ -702,7 +712,8 @@ async def sync_documents(request: dict):
         _, db = connect_chroma()
         chunk_cfg = get_chunk_config()
         
-        # 根据数据源加载文�?        dirs = []
+        # 根据数据源加载文档
+        dirs = []
         if source in ("all", "docs"):
             docs_dir = ROOT / "data" / "docs"
             if docs_dir.exists():
@@ -715,12 +726,12 @@ async def sync_documents(request: dict):
         if not dirs:
             return ApiResponse(status="error", message="没有找到数据目录")
         
-        logger.info(f"开始同步文�?(source={source})...")
+        logger.info(f"开始同步文档 (source={source})...")
         documents = load_all_documents(*dirs)
         if not documents:
             return ApiResponse(status="error", message="没有本地文档")
         
-        logger.info(f"共加�?{len(documents)} 份文�?)
+        logger.info(f"共加载 {len(documents)} 份文档")
         
         # 进度回调
         async def on_progress(op, idx, total, name, count):
@@ -762,7 +773,8 @@ async def rebuild_documents(request: dict):
         _, db = connect_chroma()
         chunk_cfg = get_chunk_config()
         
-        # 根据数据源加载文�?        dirs = []
+        # 根据数据源加载文档
+        dirs = []
         if source in ("all", "docs"):
             docs_dir = ROOT / "data" / "docs"
             if docs_dir.exists():
@@ -775,12 +787,12 @@ async def rebuild_documents(request: dict):
         if not dirs:
             return ApiResponse(status="error", message="没有找到数据目录")
         
-        logger.info(f"开始全量重�?(source={source})...")
+        logger.info(f"开始全量重建 (source={source})...")
         documents = load_all_documents(*dirs)
         if not documents:
             return ApiResponse(status="error", message="没有本地文档")
         
-        logger.info(f"共加�?{len(documents)} 份文�?)
+        logger.info(f"共加载 {len(documents)} 份文档")
         
         # 进度回调
         async def on_progress(op, idx, total, name, count):
@@ -834,7 +846,7 @@ async def batch_import_documents(request: dict):
     try:
         files = request.get("files", [])
         if not files:
-            return ApiResponse(status="error", message="未指定文�?)
+            return ApiResponse(status="error", message="未指定文件")
         
         from core.document import read_file, SUPPORTED_EXT
         
@@ -848,10 +860,10 @@ async def batch_import_documents(request: dict):
         for i, file_path in enumerate(files, 1):
             full_path = Path(file_path)
             if not full_path.exists():
-                results.append({"file": file_path, "status": "error", "message": "文件不存�?})
+                results.append({"file": file_path, "status": "error", "message": "文件不存在"})
                 await manager.broadcast({
                     "type": "batch_progress",
-                    "data": {"op": "import", "idx": i, "total": n, "name": full_path.name, "status": "error", "message": "文件不存�?}
+                    "data": {"op": "import", "idx": i, "total": n, "name": full_path.name, "status": "error", "message": "文件不存在"}
                 })
                 continue
             
@@ -875,7 +887,7 @@ async def batch_import_documents(request: dict):
                     continue
                 
                 doc_name = full_path.stem
-                text = f"[文件�? {doc_name}]\n{text}"
+                text = f"[文件名: {doc_name}]\n{text}"
                 doc = {"path": str(full_path), "text": text}
                 
                 count = db.add(doc, chunk_cfg, source_type="local_file")
@@ -914,7 +926,7 @@ async def batch_delete_documents(request: dict):
     try:
         files = request.get("files", [])
         if not files:
-            return ApiResponse(status="error", message="未指定文�?)
+            return ApiResponse(status="error", message="未指定文件")
         
         _, db = connect_chroma()
         
@@ -960,7 +972,7 @@ async def crawl_webpage(request: dict):
         if not url:
             return ApiResponse(status="error", message="URL 不能为空")
         
-        logger.info(f"开始爬�? {url}")
+        logger.info(f"开始爬取: {url}")
         
         try:
             import requests
@@ -976,7 +988,8 @@ async def crawl_webpage(request: dict):
         soup = BeautifulSoup(response.text, "html.parser")
         title = soup.title.string if soup.title else url
         
-        # 2. 提取纯文�?        for script in soup(["script", "style"]):
+        # 2. 提取纯文本
+        for script in soup(["script", "style"]):
             script.decompose()
         
         text = soup.get_text()
@@ -987,7 +1000,7 @@ async def crawl_webpage(request: dict):
         if not text:
             return ApiResponse(status="error", message="网页内容为空")
         
-        # 3. 保存�?data/web 目录
+        # 3. 保存到 data/web 目录
         web_dir = ROOT / "data" / "web"
         web_dir.mkdir(parents=True, exist_ok=True)
         
@@ -1003,13 +1016,13 @@ async def crawl_webpage(request: dict):
         # 4. 添加到向量库（和本地文档走相同流程）
         text_content = read_file(str(filepath))
         doc_name = filepath.stem
-        doc = {"path": str(filepath), "text": f"[文件�? {doc_name}]\n{text_content}"}
+        doc = {"path": str(filepath), "text": f"[文件名: {doc_name}]\n{text_content}"}
         
         _, db = connect_chroma()
         chunk_cfg = get_chunk_config()
         count = db.add(doc, chunk_cfg, source_type="local_file")
         
-        logger.info(f"爬取成功: {url}, 保存�?{filename}, {count} chunks")
+        logger.info(f"爬取成功: {url}, 保存到 {filename}, {count} chunks")
         
         return ApiResponse(
             status="success",
@@ -1020,7 +1033,8 @@ async def crawl_webpage(request: dict):
         return ApiResponse(status="error", message=str(e))
 
 # ============================================================
-#  API 端点：搜�?# ============================================================
+#  API 端点：搜索
+# ============================================================
 
 @app.post("/api/search")
 async def search_knowledge_base(request: SearchRequest):
@@ -1035,7 +1049,7 @@ async def search_knowledge_base(request: SearchRequest):
         emb_api = EmbeddingAPI()
         ok, err = emb_api.health_check()
         if not ok:
-            return ApiResponse(status="error", message=f"Embedding 服务不可�? {err}")
+            return ApiResponse(status="error", message=f"Embedding 服务不可用: {err}")
         
         scheduler = get_scheduler()
         
@@ -1123,7 +1137,8 @@ async def search_knowledge_base(request: SearchRequest):
         return ApiResponse(status="error", message=str(e))
 
 # ============================================================
-#  API 端点：服务管�?# ============================================================
+#  API 端点：服务管理
+# ============================================================
 
 @app.post("/api/services/start")
 async def start_service(request: ServiceAction):
@@ -1151,7 +1166,7 @@ async def start_service(request: ServiceAction):
             
         elif service == "rerank":
             if not get_rerank_enabled() or get_rerank_mode() != "local":
-                return ApiResponse(status="error", message="当前未启用本�?Rerank")
+                return ApiResponse(status="error", message="当前未启用本地 Rerank")
             rerank_url = os.getenv("RERANK_LOCAL_URL", "http://127.0.0.1:5001")
             try:
                 port = int(rerank_url.split(":")[-1].split("/")[0])
@@ -1172,7 +1187,7 @@ async def start_service(request: ServiceAction):
             chroma_port = int(os.getenv("CHROMA_SERVER_PORT", "9898"))
             if not check_port(host, chroma_port):
                 subprocess.Popen([sys.executable, "-m", "servers.chroma"], cwd=ROOT)
-                results.append("ChromaDB 启动�?)
+                    results.append("ChromaDB 启动中")
             
             if os.getenv("EMBEDDING_MODE", "cloud") == "local":
                 emb_url = os.getenv("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings")
@@ -1182,7 +1197,7 @@ async def start_service(request: ServiceAction):
                     emb_port = 1234
                 if not check_port(host, emb_port):
                     subprocess.Popen([sys.executable, "-m", "servers.embedding"], cwd=ROOT)
-                    results.append("Embedding 启动�?)
+                    results.append("Embedding 启动中")
             
             if get_rerank_enabled() and get_rerank_mode() == "local":
                 rerank_url = os.getenv("RERANK_LOCAL_URL", "http://127.0.0.1:5001")
@@ -1192,18 +1207,18 @@ async def start_service(request: ServiceAction):
                     rerank_port = 5001
                 if not check_port(host, rerank_port):
                     subprocess.Popen([sys.executable, "-m", "servers.rerank"], cwd=ROOT)
-                    results.append("Rerank 启动�?)
+                    results.append("Rerank 启动中")
             
             mcp_port = int(os.getenv("MCP_SERVER_PORT", "9766"))
             if not check_port(host, mcp_port):
                 subprocess.Popen([sys.executable, "-m", "servers.mcp"], cwd=ROOT)
-                results.append("MCP 启动�?)
+                results.append("MCP 启动中")
             
             return ApiResponse(status="success", data={"started": results})
         else:
             return ApiResponse(status="error", message=f"未知服务: {service}")
         
-        return ApiResponse(status="success", message=f"{service} 启动�?)
+            return ApiResponse(status="success", message=f"{service} 启动中")
     except Exception as e:
         return ApiResponse(status="error", message=str(e))
 
@@ -1270,7 +1285,7 @@ async def stop_service(request: ServiceAction):
                         ["taskkill", "/F", "/T", "/PID", str(pid)],
                         capture_output=True
                     )
-                    return ApiResponse(status="success", message=f"{service} 已停�?)
+                    return ApiResponse(status="success", message=f"{service} 已停止")
         except:
             pass
         
@@ -1292,7 +1307,8 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 # ============================================================
-#  前端静态文件托�?# ============================================================
+#  前端静态文件托管
+# ============================================================
 
 frontend_dist = ROOT / "frontend" / "dist"
 
@@ -1304,7 +1320,8 @@ if frontend_dist.exists():
         file_path = frontend_dist / full_path
         if file_path.exists() and file_path.is_file():
             response = FileResponse(str(file_path))
-            # �?index.html 和根路径设置不缓�?            if full_path == "index.html" or full_path == "":
+            # 对 index.html 和根路径设置不缓存
+            if full_path == "index.html" or full_path == "":
                 response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
                 response.headers["Pragma"] = "no-cache"
                 response.headers["Expires"] = "0"

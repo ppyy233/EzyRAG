@@ -15,7 +15,7 @@ Ezy-RAG — 统一命令行入口
   python ezyrag.py service         # 服务管理
   python ezyrag.py db              # 文档管理
   python ezyrag.py config          # 配置管理
-  python ezyrag.py health          # 健康检�?"""
+  python ezyrag.py health          # 健康检查"""
 import os
 import sys
 import subprocess
@@ -34,44 +34,45 @@ from cli.ui import header, status_card, info_card, menu, confirm, log_ok, log_er
 
 
 def check_environment() -> bool:
-    """检查环境是否就�?""
-    log_step("环境检�?)
+    """检查环境是否就绪"""
+    log_step("环境检查")
     
-    # 检�?Python 版本
+    # 检查 Python 版本
     version = sys.version_info
     if version.major < 3 or (version.major == 3 and version.minor < 11):
-        log_error(f"Python {version.major}.{version.minor}.{version.micro} (需�?>= 3.11)")
+        log_error(f"Python {version.major}.{version.minor}.{version.micro} (需要 >= 3.11)")
         return False
     log_ok(f"Python {version.major}.{version.minor}.{version.micro}")
     
-    # 检�?uv
+    # 检查 uv
     try:
         result = subprocess.run(["uv", "--version"], capture_output=True, text=True, cwd=ROOT)
         if result.returncode == 0:
-            log_ok("uv 已安�?)
+            log_ok("uv 已安装")
         else:
-            log_error("uv 未安�?)
+            log_error("uv 未安装")
             return False
     except FileNotFoundError:
-        log_error("uv 未安�?)
+        log_error("uv 未安装")
         return False
     
-    # 检�?.env
+    # 检查 .env
     env_file = ROOT / "config" / ".env"
     if env_file.exists():
-        log_ok("config/.env 已存�?)
+        log_ok("config/.env 已存在")
     else:
-        log_info("config/.env 不存在（将从模板创建�?)
+        log_info("config/.env 不存在（将从模板创建）")
     
     return True
 
 
 def cmd_quickstart():
-    """快速开始向�?""
+    """快速开始向导"""
     header("Ezy-RAG Quick Start 向导")
     
-    # Step 1: 环境检�?    if not check_environment():
-        log_error("环境检查未通过，请先解决上述问�?)
+    # Step 1: 环境检查
+    if not check_environment():
+        log_error("环境检查未通过，请先解决上述问题")
         return
     
     # Step 2: 安装依赖
@@ -82,14 +83,14 @@ def cmd_quickstart():
         if result.returncode != 0:
             log_error(f"创建虚拟环境失败: {result.stderr}")
             return
-        log_ok("虚拟环境已创�?)
+        log_ok("虚拟环境已创建")
     
     log_info("正在安装依赖...")
     result = subprocess.run(["uv", "sync"], cwd=ROOT, capture_output=True, text=True)
     if result.returncode != 0:
         log_error(f"安装依赖失败: {result.stderr}")
         return
-    log_ok("依赖已安�?)
+    log_ok("依赖已安装")
     
     # Step 3: 配置
     log_step("配置")
@@ -108,13 +109,13 @@ def cmd_quickstart():
             doc_count += len(list(docs_dir.glob(f"**/*{ext}")))
         
         if doc_count > 0:
-            log_info(f"发现 {doc_count} 个本地文�?)
-            if confirm("是否添加到向量库�?, default=True):
+            log_info(f"发现 {doc_count} 个本地文档")
+            if confirm("是否添加到向量库？", default=True):
                 subprocess.run([sys.executable, "cli/db_manage.py"], cwd=ROOT)
             else:
                 log_info("跳过添加文档")
         else:
-            log_info("data/docs/ 目录为空，跳过添加文�?)
+            log_info("data/docs/ 目录为空，跳过添加文档")
     else:
         log_info("data/docs/ 目录不存在，跳过添加文档")
     
@@ -124,21 +125,22 @@ def cmd_quickstart():
     subprocess.run([sys.executable, "cli/start_all.py"], cwd=ROOT)
     
     # 完成
-    header("Quick Start 完成�?)
-    print("\n  下一步操�?")
+    header("Quick Start 完成！")
+    print("\n  下一步操作：")
     log_info("python ezyrag.py service      # 服务管理")
     log_info("python ezyrag.py db           # 文档管理")
     log_info("python ezyrag.py config       # 配置管理")
-    log_info("python ezyrag.py health       # 健康检�?)
+    log_info("python ezyrag.py health       # 健康检查")
 
 
 def cmd_health():
-    """健康检�?""
+    """健康检查"""
     from cli.cli_core import get_service_status, get_database_stats
     
-    header("Ezy-RAG 健康检�?)
+    header("Ezy-RAG 健康检查")
     
-    # 服务状�?    status = get_service_status()
+    # 服务状态
+    status = get_service_status()
     services_display = [
         {"name": "ChromaDB", "online": status["chromadb"]["online"], "info": status["chromadb"]["info"]},
         {"name": "Embedding", "online": status["embedding"]["online"], "info": status["embedding"]["info"]},
@@ -147,12 +149,13 @@ def cmd_health():
     ]
     status_card(services_display)
     
-    # 数据库状�?    stats = get_database_stats()
-    info_card("数据库状�?, {
-        "本地文档": f"{stats['docs_count']} �?,
-        "网页数据": f"{stats['web_count']} �?,
-        "已导�?: f"{stats['vector_docs']} �?,
-        "向量�?: f"{stats['chunks']} �?,
+    # 数据库状态
+    stats = get_database_stats()
+    info_card("数据库状态", {
+        "本地文档": f"{stats['docs_count']} 个",
+        "网页数据": f"{stats['web_count']} 个",
+        "已导入": f"{stats['vector_docs']} 个",
+        "向量块": f"{stats['chunks']} 个",
         "集合": stats['collection'] or "-"
     })
 
@@ -176,37 +179,46 @@ def show_help():
     """显示帮助信息"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-�? Ezy-RAG V1.0.0 �?知识库系�?                               �?╚══════════════════════════════════════════════════════════════╝
+║ Ezy-RAG V1.0.0 — 知识库系统                                 ║
+╚══════════════════════════════════════════════════════════════╝
 
-用法�?  python ezyrag.py [command]
+用法:
+  python ezyrag.py [command]
 
-命令�?  quickstart          快速开始向导（首次使用�?  service             服务管理
+命令:
+  quickstart          快速开始向导（首次使用）
+  service             服务管理
   db                  文档管理
   config              配置管理
-  health              健康检�?  help                显示此帮�?
-首次使用�?  python ezyrag.py quickstart         # 一键初始化
+  health              健康检查
+  help                显示此帮助
+
+首次使用:
+  python ezyrag.py quickstart         # 一键初始化
 
 常用工作流：
-  1. python ezyrag.py quickstart      # 初始化配�?  2. python ezyrag.py db              # 添加文档
+  1. python ezyrag.py quickstart      # 初始化配置
+  2. python ezyrag.py db              # 添加文档
   3. python ezyrag.py service         # 启动服务
-  4. python ezyrag.py health          # 检查状�?""")
+  4. python ezyrag.py health          # 检查状态""")
 
 
 def main():
-    """主函�?""
+    """主函数"""
     args = sys.argv[1:]
     
     if not args:
-        # 无参数，显示交互式菜�?        while True:
-            header("Ezy-RAG V1.0.0 知识库系�?)
+        # 无参数，显示交互式菜单
+        while True:
+            header("Ezy-RAG V1.0.0 知识库系统")
             
             choice = menu("功能", [
-                "快速开�?,
+                "快速开始",
                 "服务管理",
                 "文档管理",
                 "配置管理",
-                "健康检�?,
-                "退�?
+                "健康检查",
+                "退出"
             ])
             
             if choice == 1:
