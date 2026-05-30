@@ -51,7 +51,7 @@ def save_env(env: dict):
         
         f.write("# ----- Rerank 配置 -----\n")
         f.write(f"RERANK_ENABLED={env.get('RERANK_ENABLED', 'true')}\n")
-        f.write(f"RERANK_MODE={env.get('RERANK_MODE', 'local')}\n\n")
+        f.write(f"RERANK_MODE={env.get('RERANK_MODE', 'cloud')}\n\n")
         f.write("# 云端配置\n")
         for key in ['RERANK_CLOUD_URL', 'RERANK_CLOUD_API_KEY', 'RERANK_CLOUD_MODEL']:
             f.write(f"{key}={env.get(key, '')}\n")
@@ -94,7 +94,7 @@ def show_config():
     
     # Rerank 配置
     rerank_enabled = env.get('RERANK_ENABLED', 'true').lower() == 'true'
-    rerank_mode = env.get('RERANK_MODE', 'local')
+    rerank_mode = env.get('RERANK_MODE', 'cloud')
     if not rerank_enabled:
         rerank_info = {"启用": "false (未启用)"}
     elif rerank_mode == 'cloud':
@@ -187,7 +187,7 @@ def modify_rerank():
     if choice == '1':
         env['RERANK_ENABLED'] = 'true'
         
-        print(f"\n  当前模式: {env.get('RERANK_MODE', 'local')}")
+        print(f"\n  当前模式: {env.get('RERANK_MODE', 'cloud')}")
         print("  1. cloud (云端)")
         print("  2. local (本地)")
         mode_choice = input("  选择模式 (1-2, 直接回车跳过): ").strip()

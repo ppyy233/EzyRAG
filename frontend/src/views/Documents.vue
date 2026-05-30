@@ -1,473 +1,785 @@
 <template>
-  <div class="documents">
-    <h1>文档管理</h1>
+  <div class="documents-page">
+    <div class="page-header">
+      <h2>文档管理</h2>
+      <p>管理本地文档和向量库，支持增量同步、批量操作</p>
+    </div>
 
+    <!-- 操作栏 -->
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <el-select v-model="selectedSource" @change="handleSourceChange" style="width: 140px;">
+          <el-option label="全部数据" value="all" />
+          <el-option label="本地文档" value="docs" />
+          <el-option label="网页数据" value="web" />
+        </el-select>
+        <el-divider direction="vertical" />
+        <el-button type="primary" @click="batchImport" :loading="batchImporting" :disabled="selectedLocalCount === 0">
+          <el-icon><Upload /></el-icon>
+          <span>批量导入 ({{ selectedLocalCount }})</span>
+        </el-button>
+        <el-button type="danger" @click="batchDelete" :loading="batchDeleting" :disabled="selectedImportedCount === 0">
+          <el-icon><Delete /></el-icon>
+          <span>批量删除 ({{ selectedImportedCount }})</span>
+        </el-button>
+        <el-button type="danger" @click="deleteAll" :loading="deletingAll">
+          <el-icon><Delete /></el-icon>
+          <span>完全删除</span>
+        </el-button>
+      </div>
+      <div class="toolbar-right">
+        <template v-if="progress.visible">
+          <el-button type="danger" @click="stopOperation">
+            <el-icon><VideoPause /></el-icon>
+            <span>停止</span>
+          </el-button>
+        </template>
+        <el-button v-else @click="syncDocs" :loading="syncing">
+          <el-icon><Refresh /></el-icon>
+          <span>增量同步</span>
+        </el-button>
+        <el-button type="warning" @click="rebuildDocs" :loading="rebuilding">
+          <el-icon><RefreshRight /></el-icon>
+          <span>全量重建</span>
+        </el-button>
+        <el-button @click="cleanOrphans" :loading="cleaning">
+          <el-icon><Delete /></el-icon>
+          <span>清理孤立</span>
+        </el-button>
+        <el-button @click="refresh">
+          <el-icon><Refresh /></el-icon>
+          <span>刷新</span>
+        </el-button>
+      </div>
+    </div>
+
+    <!-- 进度条 -->
+    <div v-if="progress.visible" class="progress-section">
+      <div class="progress-info">
+        <div class="progress-current">当前: {{ progress.currentFile }}</div>
+        <div class="progress-step">步骤: {{ progress.step }}</div>
+      </div>
+      <el-progress
+        :percentage="progress.percentage"
+        :status="progress.status"
+        :stroke-width="20"
+        striped
+        striped-flow
+      >
+        <span>{{ progress.text }}</span>
+      </el-progress>
+    </div>
+
+    <!-- Tab 切换 -->
     <el-tabs v-model="activeTab" type="border-card">
-
-      <!-- Tab 1: 本地文件 -->
-      <el-tab-pane label="本地文件" name="local">
-        <div class="tab-toolbar">
-          <el-button type="primary" @click="importSelected" :disabled="selectedLocal.length === 0 || importingLock" :loading="importingLock && currentAction === 'selected'">
-            <el-icon><Plus /></el-icon> 导入选中 ({{ selectedLocal.length }})
-          </el-button>
-          <el-button type="success" @click="importAll" :disabled="importingLock" :loading="importingLock && currentAction === 'all'">
-            <el-icon><Plus /></el-icon> 导入全部
-          </el-button>
-          <el-button v-if="importingLock" type="danger" @click="stopVectorization">
-            <el-icon><VideoPause /></el-icon> 停止向量化
-          </el-button>
-          <el-button @click="refreshLocal" :disabled="importingLock">
-            <el-icon><RefreshRight /></el-icon> 刷新
-          </el-button>
-        </div>
-
-        <div class="upload-drop" @dragover.prevent @drop.prevent="handleDrop">
-          <el-icon class="upload-icon"><UploadFilled /></el-icon>
-          <div class="upload-text">拖拽文件或文件夹到此处上传到本地</div>
+      <!-- 文档列表 -->
+      <el-tab-pane label="文档列表" name="list">
+        <!-- 拖拽上传 -->
+        <div class="upload-area" 
+             @dragover.prevent="dragover" 
+             @dragleave="dragleave" 
+             @drop.prevent="handleDrop"
+             :class="{ 'is-dragover': isDragover }"
+        >
+          <el-icon class="el-icon--upload"><Upload /></el-icon>
+          <div class="el-upload__text">
+            拖拽文件或文件夹到此处，或 <em>点击选择</em>
+          </div>
           <div class="upload-buttons">
             <label class="el-button el-button--primary el-button--small">
               <el-icon><Document /></el-icon> 选择文件
-              <input type="file" multiple hidden @change="handleFileInput" />
+              <input type="file" multiple hidden @change="handleFileSelect" />
             </label>
             <label class="el-button el-button--success el-button--small">
               <el-icon><FolderOpened /></el-icon> 选择文件夹
-              <input type="file" webkitdirectory multiple hidden @change="handleFolderInput" />
+              <input type="file" webkitdirectory multiple hidden @change="handleFileSelect" />
             </label>
           </div>
+          <div class="el-upload__tip">支持 PDF、DOCX、TXT、MD 等格式，文件将自动复制到 data/docs 目录</div>
         </div>
 
-        <div v-if="uploadFileList.length > 0" class="upload-info">
-          <span>已选择 {{ uploadFileList.length }} 个文件</span>
-          <el-button type="primary" size="small" @click="uploadFiles" :loading="uploadLoading" style="margin-left:10px">上传</el-button>
-          <el-button size="small" @click="uploadFileList = []">清空</el-button>
-        </div>
-
-        <el-table :data="pagedLocalDocs" @selection-change="s => selectedLocal = s" stripe style="margin-top:15px">
+        <!-- 文档表格 -->
+        <el-table :data="paginatedDocuments" stripe v-loading="loading" @selection-change="handleSelectionChange">
           <el-table-column type="selection" width="55" />
           <el-table-column prop="name" label="文件名" min-width="200" />
-          <el-table-column prop="in_vector" label="向量库" width="100">
+          <el-table-column label="来源" width="100">
             <template #default="scope">
-              <el-tag :type="scope.row.in_vector ? 'success' : 'info'" size="small">
-                {{ scope.row.in_vector ? '已导入' : '未导入' }}
+              <el-tag :type="scope.row.source_type === 'web' ? 'success' : 'primary'" size="small">
+                {{ scope.row.source_type === 'web' ? '网页' : '本地' }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="chunks" label="Chunks" width="80" />
-          <el-table-column label="操作" width="180">
+          <el-table-column label="状态" width="120">
             <template #default="scope">
-              <el-button size="small" type="primary" @click="importDoc(scope.row)" :disabled="scope.row.in_vector || importingLock" :loading="scope.row._loading">导入</el-button>
-              <el-button size="small" type="warning" @click="updateDoc(scope.row)" :disabled="!scope.row.in_vector || importingLock" :loading="scope.row._loading">更新</el-button>
+              <el-tag :type="getStatusType(scope.row.status)">
+                {{ getStatusText(scope.row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="chunks" label="Chunks" width="100" />
+          <el-table-column label="操作" width="250">
+            <template #default="scope">
+              <el-button
+                v-if="scope.row.status === 'local'"
+                type="primary"
+                size="small"
+                @click="importDoc(scope.row)"
+                :loading="scope.row.importing"
+              >
+                导入
+              </el-button>
+              <el-button
+                v-if="scope.row.status === 'imported'"
+                type="success"
+                size="small"
+                @click="updateDoc(scope.row)"
+                :loading="scope.row.updating"
+              >
+                更新
+              </el-button>
+              <el-button
+                v-if="scope.row.status === 'imported'"
+                type="danger"
+                size="small"
+                @click="deleteDoc(scope.row)"
+                :loading="scope.row.deleting"
+              >
+                删除
+              </el-button>
             </template>
           </el-table-column>
         </el-table>
 
-        <div class="pagination-bar">
-          <el-pagination v-model:current-page="localPage" :page-size="pageSize" :total="localDocs.length" layout="total, prev, pager, next" />
+        <!-- 分页 -->
+        <div class="pagination-container">
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="documents.length"
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleSizeChange"
+            @current-change="handleCurrentChange"
+          />
         </div>
       </el-tab-pane>
 
-      <!-- Tab 2: 向量库文档 -->
-      <el-tab-pane label="向量库文档" name="vector">
-        <div class="tab-toolbar">
-          <el-button type="danger" @click="deleteSelectedVector" :disabled="selectedVector.length === 0">
-            <el-icon><Delete /></el-icon> 删除选中 ({{ selectedVector.length }})
-          </el-button>
-          <el-button type="warning" @click="deleteAllVector">
-            <el-icon><Delete /></el-icon> 清空向量库
-          </el-button>
-          <el-button @click="refreshVector">
-            <el-icon><RefreshRight /></el-icon> 刷新
-          </el-button>
-          <span class="vector-summary">共 {{ vectorDocs.length }} 个文档，{{ vectorTotalChunks }} 个 chunks</span>
-        </div>
-
-        <el-table :data="pagedVectorDocs" @selection-change="s => selectedVector = s" stripe style="margin-top:15px">
-          <el-table-column type="selection" width="55" />
-          <el-table-column label="文件名" min-width="250">
-            <template #default="scope">{{ getFileName(scope.row.source) }}</template>
-          </el-table-column>
-          <el-table-column prop="source" label="来源路径" min-width="350" show-overflow-tooltip />
-          <el-table-column prop="chunks" label="Chunks" width="100" />
-          <el-table-column label="操作" width="100">
-            <template #default="scope">
-              <el-button size="small" type="danger" @click="deleteVectorDoc(scope.row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-
-        <div class="pagination-bar">
-          <el-pagination v-model:current-page="vectorPage" :page-size="pageSize" :total="vectorDocs.length" layout="total, prev, pager, next" />
+      <!-- 网页爬取 -->
+      <el-tab-pane label="网页爬取" name="crawl">
+        <div class="crawl-section">
+          <h3>网页爬取</h3>
+          <p>输入网页 URL，自动爬取内容并添加到向量库</p>
+          <el-form label-width="100px">
+            <el-form-item label="网页 URL">
+              <el-input v-model="crawlUrl" placeholder="https://example.com" size="large" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="crawlWeb" :loading="crawling" size="large">
+                <el-icon><Download /></el-icon>
+                <span>开始爬取</span>
+              </el-button>
+            </el-form-item>
+          </el-form>
         </div>
       </el-tab-pane>
     </el-tabs>
-
-    <!-- 进度 + 日志窗口 -->
-    <el-card v-if="progress.visible" class="progress-card">
-      <template #header>
-        <div class="progress-header">
-          <span>{{ progress.text }}</span>
-          <el-button v-if="importingLock" type="danger" size="small" @click="stopVectorization">
-            停止向量化
-          </el-button>
-        </div>
-      </template>
-      <el-progress :percentage="progress.percent" :status="progress.status" :stroke-width="20" />
-      <div class="log-window" ref="logWindow">
-        <div v-for="(log, index) in progressLogs" :key="index" class="log-line">
-          <span class="log-time">{{ log.time }}</span>
-          <span class="log-msg" :class="{ 'log-error': log.type === 'error', 'log-success': log.type === 'success' }">{{ log.message }}</span>
-        </div>
-        <div v-if="progressLogs.length === 0" class="log-empty">等待日志...</div>
-      </div>
-    </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, nextTick } from 'vue'
-import {
-  getDocuments, addDocument, deleteDocument, updateDocument, uploadDocument,
-  getVectorDocs, deleteVectorDoc as deleteVectorDocApi, cancelVectorization
-} from '../api'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { documentsApi, createWebSocket } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Upload, Refresh, RefreshRight, Delete, Download, VideoPause, Document, FolderOpened } from '@element-plus/icons-vue'
 
-const activeTab = ref('local')
-const pageSize = 20
+const activeTab = ref('list')
+const documents = ref([])
+const loading = ref(false)
+const syncing = ref(false)
+const rebuilding = ref(false)
+const cleaning = ref(false)
+const crawling = ref(false)
+const crawlUrl = ref('')
 
-// ===== 本地文件 =====
-const localDocs = ref([])
-const selectedLocal = ref([])
-const localPage = ref(1)
-const uploadFileList = ref([])
-const uploadLoading = ref(false)
+const selectedSource = ref('all')
+const selectedDocs = ref([])
+const batchImporting = ref(false)
+const batchDeleting = ref(false)
+const deletingAll = ref(false)
+const isDragover = ref(false)
 
-const pagedLocalDocs = computed(() => {
-  const start = (localPage.value - 1) * pageSize
-  return localDocs.value.slice(start, start + pageSize)
+const currentPage = ref(1)
+const pageSize = ref(20)
+
+const progress = ref({
+  visible: false,
+  percentage: 0,
+  text: '',
+  status: '',
+  currentFile: '',
+  step: ''
 })
 
-const loadLocalDocs = async () => {
-  try {
-    const response = await getDocuments()
-    if (response.status === 'success') {
-      localDocs.value = (response.data.documents || []).map(d => ({ ...d, _loading: false }))
-    }
-  } catch (e) { console.error(e) }
-}
+let ws = null
 
-// ===== 向量库文档 =====
-const vectorDocs = ref([])
-const selectedVector = ref([])
-const vectorPage = ref(1)
-
-const pagedVectorDocs = computed(() => {
-  const start = (vectorPage.value - 1) * pageSize
-  return vectorDocs.value.slice(start, start + pageSize)
+const paginatedDocuments = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return documents.value.slice(start, end)
 })
 
-const vectorTotalChunks = computed(() => vectorDocs.value.reduce((s, d) => s + d.chunks, 0))
-const getFileName = (source) => source.split(/[/\\]/).pop()
+const selectedLocalCount = computed(() => {
+  return selectedDocs.value.filter(d => d.status === 'local').length
+})
 
-const loadVectorDocs = async () => {
+const selectedImportedCount = computed(() => {
+  return selectedDocs.value.filter(d => d.status === 'imported').length
+})
+
+const handleSizeChange = (val) => {
+  pageSize.value = val
+  currentPage.value = 1
+}
+
+const handleCurrentChange = (val) => {
+  currentPage.value = val
+}
+
+const handleSourceChange = async () => {
+  await refresh()
+}
+
+const dragover = () => {
+  isDragover.value = true
+}
+
+const dragleave = () => {
+  isDragover.value = false
+}
+
+const handleDrop = async (event) => {
+  isDragover.value = false
+  const files = event.dataTransfer.files
+  if (!files || files.length === 0) return
+  
+  const filesToUpload = []
+  for (const file of files) {
+    // file.name 包含完整路径（如果是文件夹）
+    // file.webkitRelativePath 包含相对路径（如果是文件夹）
+    filesToUpload.push(file)
+  }
+  
+  if (filesToUpload.length > 0) {
+    await uploadFiles(filesToUpload)
+  }
+}
+
+const handleFileSelect = async (event) => {
+  const files = event.target.files
+  if (!files || files.length === 0) return
+  
+  const filesToUpload = []
+  for (const file of files) {
+    filesToUpload.push(file)
+  }
+  
+  if (filesToUpload.length > 0) {
+    await uploadFiles(filesToUpload)
+  }
+  event.target.value = ''
+}
+
+const uploadFiles = async (files) => {
+  showProgress(`正在上传 ${files.length} 个文件...`, 0, '', '准备中...', '上传中...')
+  
   try {
-    const response = await getVectorDocs()
-    if (response.status === 'success') {
-      vectorDocs.value = response.data.documents || []
-    }
-  } catch (e) { console.error(e) }
+    const result = await documentsApi.upload(files)
+    showProgress(`上传完成: ${result.data.count} 个文件`, 100, 'success', '完成', `已上传到 data/docs 目录`)
+    ElMessage.success(`上传完成: ${result.data.count} 个文件`)
+    await refresh()
+  } catch (e) {
+    showProgress('上传失败', 100, 'exception', '失败', e.message)
+    ElMessage.error(`上传失败: ${e.message}`)
+  } finally {
+    setTimeout(hideProgress, 3000)
+  }
 }
 
-// ===== 进度 + 日志 =====
-const progress = reactive({ visible: false, text: '', percent: 0, status: '' })
-const progressLogs = ref([])
-const logWindow = ref(null)
-const importingLock = ref(false)
-const cancelRequested = ref(false)
-const currentAction = ref('')
-
-const addLog = (message, type = 'info') => {
-  progressLogs.value.push({ time: new Date().toLocaleTimeString(), message, type })
-  nextTick(() => {
-    if (logWindow.value) logWindow.value.scrollTop = logWindow.value.scrollHeight
-  })
+const handleSelectionChange = (selection) => {
+  selectedDocs.value = selection
 }
 
-const showProgress = (text, percent = 0, status = '') => {
-  progress.visible = true
-  progress.text = text
-  progress.percent = percent
-  progress.status = status
+const showProgress = (text, percentage = 0, status = '', currentFile = '', step = '') => {
+  progress.value = { visible: true, percentage, text, status, currentFile, step }
 }
 
 const hideProgress = () => {
-  progress.visible = false
-  progress.text = ''
-  progress.percent = 0
-  progress.status = ''
+  progress.value.visible = false
 }
 
-const stopVectorization = async () => {
-  cancelRequested.value = true
-  try {
-    await cancelVectorization()
-    addLog('已发送停止请求，等待当前批次完成...', 'error')
-    ElMessage.info('已发送停止请求')
-  } catch (e) { /* skip */ }
-}
-
-// ===== 文件过滤 =====
-const SUPPORTED_EXT = new Set(['.txt','.md','.pdf','.docx','.py','.js','.ts','.java','.c','.cpp','.go','.rs','.r','.sh','.sql','.json','.yaml','.yml','.csv','.xml','.toml','.html','.css'])
-const filterFiles = (files) => Array.from(files).filter(f => SUPPORTED_EXT.has('.' + f.name.split('.').pop().toLowerCase()))
-
-const handleFileInput = (e) => { uploadFileList.value.push(...filterFiles(e.target.files)); e.target.value = '' }
-const handleFolderInput = (e) => { uploadFileList.value.push(...filterFiles(e.target.files)); e.target.value = '' }
-
-const readEntryRecursive = (entry) => new Promise(resolve => {
-  if (entry.isFile) entry.file(f => resolve([f]), () => resolve([]))
-  else if (entry.isDirectory) {
-    const reader = entry.createReader()
-    reader.readEntries(async entries => {
-      const files = []
-      for (const e of entries) files.push(...await readEntryRecursive(e))
-      resolve(files)
-    }, () => resolve([]))
-  } else resolve([])
-})
-
-const handleDrop = async (e) => {
-  const files = []
-  for (const item of e.dataTransfer.items) {
-    if (item.kind === 'file') {
-      const entry = item.webkitGetAsEntry?.()
-      if (entry) files.push(...await readEntryRecursive(entry))
-      else { const f = item.getAsFile(); if (f) files.push(f) }
-    }
+const getStatusType = (status) => {
+  switch (status) {
+    case 'imported': return 'success'
+    case 'local': return 'info'
+    case 'orphan': return 'warning'
+    default: return ''
   }
-  uploadFileList.value.push(...filterFiles(files))
 }
 
-// ===== 操作 =====
-const importDoc = async (doc) => {
-  if (importingLock.value) { ElMessage.warning('正在导入中，请等待完成或点击停止'); return }
-  importingLock.value = true
-  cancelRequested.value = false
-  currentAction.value = 'single'
-  progressLogs.value = []
-  showProgress(`正在导入: ${doc.name}...`, 0)
-  addLog(`开始导入: ${doc.name}`)
-  doc._loading = true
+const getStatusText = (status) => {
+  switch (status) {
+    case 'imported': return '已导入'
+    case 'local': return '未导入'
+    case 'orphan': return '孤立'
+    default: return status
+  }
+}
+
+const refresh = async () => {
+  loading.value = true
   try {
-    const r = await addDocument(doc.path)
-    if (r.status === 'success') {
-      addLog(`完成: ${doc.name} - ${r.message}`, 'success')
-      showProgress('导入完成', 100, 'success')
-      loadLocalDocs(); loadVectorDocs()
-    } else {
-      addLog(`失败: ${doc.name} - ${r.message}`, 'error')
-      showProgress('导入失败', 100, 'exception')
-    }
+    const result = await documentsApi.list(selectedSource.value)
+    documents.value = result.data.map(doc => ({
+      ...doc,
+      importing: false,
+      updating: false,
+      deleting: false
+    }))
   } catch (e) {
-    addLog(`失败: ${doc.name} - ${e.message}`, 'error')
-    showProgress('导入失败', 100, 'exception')
+    console.error('Failed to fetch documents:', e)
   } finally {
-    doc._loading = false
-    importingLock.value = false
-    currentAction.value = ''
+    loading.value = false
+  }
+}
+
+const handleFileChange = async (file) => {
+  const filePath = file.raw.path || file.name
+  await importDoc({ name: file.name, path: filePath, importing: false })
+}
+
+const importDoc = async (doc) => {
+  doc.importing = true
+  showProgress(`导入: ${doc.name}`, 0, '', doc.name, '正在读取文件...')
+  try {
+    const result = await documentsApi.importFiles([doc.path])
+    if (result.data.results[0].status === 'success') {
+      showProgress(`导入成功: ${doc.name}`, 100, 'success', doc.name, `完成 (${result.data.results[0].chunks} chunks)`)
+      ElMessage.success(`导入成功: ${doc.name}`)
+    } else {
+      showProgress(`导入失败: ${doc.name}`, 100, 'exception', doc.name, result.data.results[0].message)
+      ElMessage.error(`导入失败: ${doc.name}`)
+    }
+    await refresh()
+  } catch (e) {
+    showProgress(`导入失败: ${doc.name}`, 100, 'exception', doc.name, e.message)
+    ElMessage.error(`导入失败: ${doc.name}`)
+  } finally {
+    doc.importing = false
+    setTimeout(hideProgress, 3000)
   }
 }
 
 const updateDoc = async (doc) => {
-  if (importingLock.value) { ElMessage.warning('正在导入中，请等待完成或点击停止'); return }
-  importingLock.value = true
-  cancelRequested.value = false
-  currentAction.value = 'single'
-  progressLogs.value = []
-  showProgress(`正在更新: ${doc.name}...`, 0)
-  addLog(`开始更新: ${doc.name}`)
-  doc._loading = true
+  doc.updating = true
+  showProgress(`更新: ${doc.name}`, 0, '', doc.name, '正在读取文件...')
   try {
-    const r = await updateDocument(doc.path)
-    if (r.status === 'success') {
-      addLog(`完成: ${doc.name} - ${r.message}`, 'success')
-      showProgress('更新完成', 100, 'success')
-      loadLocalDocs(); loadVectorDocs()
+    const result = await documentsApi.updateFile(doc.path)
+    if (result.status === 'success') {
+      showProgress(`更新成功: ${doc.name}`, 100, 'success', doc.name, `完成 (${result.data.chunks} chunks)`)
+      ElMessage.success(`更新成功: ${doc.name}`)
     } else {
-      addLog(`失败: ${doc.name} - ${r.message}`, 'error')
-      showProgress('更新失败', 100, 'exception')
+      showProgress(`更新失败: ${doc.name}`, 100, 'exception', doc.name, result.message)
+      ElMessage.error(`更新失败: ${doc.name}`)
     }
+    await refresh()
   } catch (e) {
-    addLog(`失败: ${doc.name} - ${e.message}`, 'error')
-    showProgress('更新失败', 100, 'exception')
+    showProgress(`更新失败: ${doc.name}`, 100, 'exception', doc.name, e.message)
+    ElMessage.error(`更新失败: ${doc.name}`)
   } finally {
-    doc._loading = false
-    importingLock.value = false
-    currentAction.value = ''
+    doc.updating = false
+    setTimeout(hideProgress, 3000)
   }
 }
 
-const importSelected = async () => {
-  const docs = selectedLocal.value.filter(d => !d.in_vector)
-  if (!docs.length) return
-  if (importingLock.value) { ElMessage.warning('正在导入中，请等待完成或点击停止'); return }
-  importingLock.value = true
-  cancelRequested.value = false
-  currentAction.value = 'selected'
-  progressLogs.value = []
-  showProgress('批量导入中...', 0)
-  addLog(`开始批量导入 ${docs.length} 个文件`)
-  let done = 0
-  let success = 0
-  let failed = 0
-  for (const doc of docs) {
-    if (cancelRequested.value) {
-      addLog(`用户停止，已处理 ${done}/${docs.length} 个文件`, 'error')
-      break
+const deleteDoc = async (doc) => {
+  try {
+    await ElMessageBox.confirm(`确定要删除 ${doc.name} 的向量记录吗？`, '确认删除', { type: 'warning' })
+    doc.deleting = true
+    showProgress(`删除: ${doc.name}`, 0, '', doc.name, '正在删除...')
+    await documentsApi.delete(doc.path)
+    showProgress(`删除成功: ${doc.name}`, 100, 'success', doc.name, '完成')
+    ElMessage.success(`删除成功: ${doc.name}`)
+    await refresh()
+  } catch (e) {
+    if (e !== 'cancel') {
+      showProgress(`删除失败: ${doc.name}`, 100, 'exception', doc.name, e.message)
+      ElMessage.error(`删除失败: ${doc.name}`)
     }
-    addLog(`[${done + 1}/${docs.length}] 正在导入: ${doc.name}`)
-    showProgress(`[${done + 1}/${docs.length}] ${doc.name}`, Math.round(done / docs.length * 100))
-    try {
-      const r = await addDocument(doc.path)
-      if (r.status === 'success') {
-        addLog(`  完成: ${r.message}`, 'success')
-        success++
+  } finally {
+    doc.deleting = false
+    setTimeout(hideProgress, 3000)
+  }
+}
+
+const batchImport = async () => {
+  const files = selectedDocs.value.filter(d => d.status === 'local').map(d => d.path)
+  if (files.length === 0) {
+    ElMessage.warning('没有选中未导入的文件')
+    return
+  }
+  batchImporting.value = true
+  showProgress(`批量导入 ${files.length} 个文件...`, 0, '', '准备中...', '开始导入')
+  try {
+    const result = await documentsApi.batchImport(files)
+    showProgress(`批量导入完成: ${result.data.imported} 个文件`, 100, 'success', '完成', `${result.data.total_chunks} chunks`)
+    ElMessage.success(`批量导入完成: ${result.data.imported} 个文件`)
+    selectedDocs.value = []
+    await refresh()
+  } catch (e) {
+    showProgress('批量导入失败', 100, 'exception', '失败', e.message)
+    ElMessage.error(`批量导入失败: ${e.message}`)
+  } finally {
+    batchImporting.value = false
+    setTimeout(hideProgress, 3000)
+  }
+}
+
+const batchDelete = async () => {
+  const files = selectedDocs.value.filter(d => d.status === 'imported').map(d => d.path)
+  if (files.length === 0) {
+    ElMessage.warning('没有选中已导入的文件')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确定要删除选中的 ${files.length} 个文件的向量记录吗？`, '确认批量删除', { type: 'warning' })
+    batchDeleting.value = true
+    showProgress(`批量删除 ${files.length} 个文件...`, 0, '', '准备中...', '开始删除')
+    const result = await documentsApi.batchDelete(files)
+    showProgress(`批量删除完成: ${result.data.deleted} 个文件`, 100, 'success', '完成', `删除 ${result.data.deleted} 个文件`)
+    ElMessage.success(`批量删除完成: ${result.data.deleted} 个文件`)
+    selectedDocs.value = []
+    await refresh()
+  } catch (e) {
+    if (e !== 'cancel') {
+      showProgress('批量删除失败', 100, 'exception', '失败', e.message)
+      ElMessage.error(`批量删除失败: ${e.message}`)
+    }
+  } finally {
+    batchDeleting.value = false
+    setTimeout(hideProgress, 3000)
+  }
+}
+
+const deleteAll = async () => {
+  try {
+    await ElMessageBox.confirm('确定要完全删除所有文档的向量记录吗？此操作不可撤销！', '确认完全删除', { 
+      type: 'warning',
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消'
+    })
+    deletingAll.value = true
+    showProgress('完全删除所有文档...', 0, '', '准备中...', '开始删除')
+    const result = await documentsApi.deleteAll(selectedSource.value)
+    showProgress(`完全删除完成: ${result.data.deleted} 个文件`, 100, 'success', '完成', `删除 ${result.data.deleted} 个文件`)
+    ElMessage.success(`完全删除完成: ${result.data.deleted} 个文件`)
+    selectedDocs.value = []
+    await refresh()
+  } catch (e) {
+    if (e !== 'cancel') {
+      showProgress('完全删除失败', 100, 'exception', '失败', e.message)
+      ElMessage.error(`完全删除失败: ${e.message}`)
+    }
+  } finally {
+    deletingAll.value = false
+    setTimeout(hideProgress, 3000)
+  }
+}
+
+const syncDocs = async () => {
+  syncing.value = true
+  showProgress('增量同步中...', 0, '', '准备中...', '开始同步')
+  try {
+    const result = await documentsApi.sync(selectedSource.value)
+    const stats = result.data
+    showProgress('同步完成', 100, 'success', '完成', `新增 ${stats.added}, 更新 ${stats.updated}, 未变 ${stats.unchanged}, 删除 ${stats.deleted}`)
+    ElMessage.success('同步完成')
+    await refresh()
+  } catch (e) {
+    showProgress('同步失败', 100, 'exception', '失败', e.message)
+    ElMessage.error(`同步失败: ${e.message}`)
+  } finally {
+    syncing.value = false
+    setTimeout(hideProgress, 3000)
+  }
+}
+
+const rebuildDocs = async () => {
+  try {
+    await ElMessageBox.confirm('确定要全量重建向量库吗？这将清空现有数据并重新处理所有文档。', '确认重建', { type: 'warning' })
+    rebuilding.value = true
+    showProgress('全量重建中...', 0, '', '准备中...', '开始重建')
+    const result = await documentsApi.rebuild(selectedSource.value)
+    showProgress('重建完成', 100, 'success', '完成', `${result.data.chunks} chunks, ${result.data.documents} 文档`)
+    ElMessage.success('重建完成')
+    await refresh()
+  } catch (e) {
+    if (e !== 'cancel') {
+      showProgress('重建失败', 100, 'exception', '失败', e.message)
+      ElMessage.error(`重建失败: ${e.message}`)
+    }
+  } finally {
+    rebuilding.value = false
+    setTimeout(hideProgress, 3000)
+  }
+}
+
+const cleanOrphans = async () => {
+  cleaning.value = true
+  showProgress('清理孤立记录...', 0, '', '准备中...', '开始清理')
+  try {
+    const result = await documentsApi.cleanOrphans(selectedSource.value)
+    if (result.data.cleaned === 0) {
+      showProgress('没有孤立记录', 100, 'success', '完成', '没有孤立记录')
+      ElMessage.info('没有孤立记录')
+    } else {
+      showProgress(`清理完成: ${result.data.cleaned} 个孤立记录`, 100, 'success', '完成', `清理 ${result.data.cleaned} 个孤立记录`)
+      ElMessage.success(`清理完成: ${result.data.cleaned} 个孤立记录`)
+    }
+    await refresh()
+  } catch (e) {
+    showProgress('清理失败', 100, 'exception', '失败', e.message)
+    ElMessage.error(`清理失败: ${e.message}`)
+  } finally {
+    cleaning.value = false
+    setTimeout(hideProgress, 3000)
+  }
+}
+
+const crawlWeb = async () => {
+  if (!crawlUrl.value) {
+    ElMessage.warning('请输入网页 URL')
+    return
+  }
+  crawling.value = true
+  showProgress(`爬取: ${crawlUrl.value}`, 0, '', crawlUrl.value, '正在爬取...')
+  try {
+    const result = await documentsApi.crawl(crawlUrl.value)
+    showProgress(`爬取成功: ${result.data.title}`, 100, 'success', crawlUrl.value, `完成 (${result.data.chunks} chunks)`)
+    ElMessage.success(`爬取成功: ${result.data.chunks} chunks`)
+    crawlUrl.value = ''
+    await refresh()
+  } catch (e) {
+    showProgress('爬取失败', 100, 'exception', crawlUrl.value, e.message)
+    ElMessage.error(`爬取失败: ${e.message}`)
+  } finally {
+    crawling.value = false
+    setTimeout(hideProgress, 3000)
+  }
+}
+
+const stopOperation = async () => {
+  try {
+    await ElMessageBox.confirm('确定要停止当前操作吗？', '确认停止', { type: 'warning' })
+    showProgress('已停止', 100, 'exception', '已停止', '用户取消')
+    ElMessage.info('操作已停止')
+    syncing.value = false
+    rebuilding.value = false
+    cleaning.value = false
+    batchImporting.value = false
+    batchDeleting.value = false
+    deletingAll.value = false
+    crawling.value = false
+    setTimeout(hideProgress, 1000)
+  } catch (e) {
+    // 用户取消停止
+  }
+}
+
+onMounted(() => {
+  refresh()
+  ws = createWebSocket((data) => {
+    if (data.type === 'import_progress') {
+      const d = data.data
+      const percent = Math.round(d.idx / d.total * 100)
+      if (d.status === 'success') {
+        showProgress(`[${d.idx}/${d.total}] 导入: ${d.file}`, percent, '', d.file, `完成 (${d.chunks} chunks)`)
       } else {
-        addLog(`  失败: ${r.message}`, 'error')
-        failed++
+        showProgress(`[${d.idx}/${d.total}] 导入失败: ${d.file}`, percent, 'exception', d.file, d.message)
       }
-    } catch (e) {
-      addLog(`  失败: ${e.message}`, 'error')
-      failed++
-    }
-    done++
-    showProgress(`[${done}/${docs.length}] 完成`, Math.round(done / docs.length * 100))
-  }
-  addLog(`批量导入结束: 成功 ${success}，失败 ${failed}，共 ${done}/${docs.length}`, success > 0 ? 'success' : 'error')
-  showProgress(`导入完成 (${success}/${docs.length})`, 100, failed === 0 ? 'success' : 'exception')
-  importingLock.value = false
-  currentAction.value = ''
-  loadLocalDocs(); loadVectorDocs()
-}
-
-const importAll = async () => {
-  const docs = localDocs.value.filter(d => !d.in_vector)
-  if (!docs.length) { ElMessage.info('没有需要导入的文件'); return }
-  if (importingLock.value) { ElMessage.warning('正在导入中，请等待完成或点击停止'); return }
-  try { await ElMessageBox.confirm(`确定导入 ${docs.length} 个文件到向量库？`, '确认', { type: 'info' }) } catch { return }
-  importingLock.value = true
-  cancelRequested.value = false
-  currentAction.value = 'all'
-  progressLogs.value = []
-  showProgress('批量导入中...', 0)
-  addLog(`开始导入全部 ${docs.length} 个文件`)
-  let done = 0
-  let success = 0
-  let failed = 0
-  for (const doc of docs) {
-    if (cancelRequested.value) {
-      addLog(`用户停止，已处理 ${done}/${docs.length} 个文件`, 'error')
-      break
-    }
-    addLog(`[${done + 1}/${docs.length}] 正在导入: ${doc.name}`)
-    showProgress(`[${done + 1}/${docs.length}] ${doc.name}`, Math.round(done / docs.length * 100))
-    try {
-      const r = await addDocument(doc.path)
-      if (r.status === 'success') {
-        addLog(`  完成: ${r.message}`, 'success')
-        success++
-      } else {
-        addLog(`  失败: ${r.message}`, 'error')
-        failed++
+    } else if (data.type === 'sync_progress') {
+      const d = data.data
+      const percent = Math.round(d.idx / d.total * 100)
+      if (d.op === 'copy') {
+        showProgress(`复制: ${d.idx}/${d.total}`, percent, '', d.name, '复制数据')
+      } else if (d.op === 'add') {
+        showProgress(`[${d.idx}/${d.total}] 新增: ${d.name}`, percent, '', d.name, `新增 ${d.count} chunks`)
+      } else if (d.op === 'update') {
+        showProgress(`[${d.idx}/${d.total}] 更新: ${d.name}`, percent, '', d.name, `更新 ${d.count} chunks`)
+      } else if (d.op === 'delete') {
+        showProgress(`删除: ${d.name}`, percent, '', d.name, '删除')
       }
-    } catch (e) {
-      addLog(`  失败: ${e.message}`, 'error')
-      failed++
+    } else if (data.type === 'sync_complete') {
+      showProgress('同步完成', 100, 'success', '完成', '同步完成')
+    } else if (data.type === 'rebuild_progress') {
+      const d = data.data
+      if (d.op === 'rebuild') {
+        const percent = Math.round(d.idx / d.total * 100)
+        showProgress(`[${d.idx}/${d.total}] ${d.name}`, percent, '', d.name, `重建 ${d.count} chunks`)
+      }
+    } else if (data.type === 'rebuild_complete') {
+      showProgress('重建完成', 100, 'success', '完成', '重建完成')
+    } else if (data.type === 'batch_progress') {
+      const d = data.data
+      const percent = Math.round(d.idx / d.total * 100)
+      if (d.op === 'import') {
+        if (d.status === 'success') {
+          showProgress(`[${d.idx}/${d.total}] 导入: ${d.name}`, percent, '', d.name, `完成 (${d.chunks} chunks)`)
+        } else {
+          showProgress(`[${d.idx}/${d.total}] 导入失败: ${d.name}`, percent, 'exception', d.name, d.message)
+        }
+      } else if (d.op === 'delete') {
+        if (d.status === 'success') {
+          showProgress(`[${d.idx}/${d.total}] 删除: ${d.name}`, percent, '', d.name, '完成')
+        } else {
+          showProgress(`[${d.idx}/${d.total}] 删除失败: ${d.name}`, percent, 'exception', d.name, d.message)
+        }
+      }
+    } else if (data.type === 'batch_complete') {
+      const d = data.data
+      if (d.op === 'import') {
+        showProgress(`批量导入完成: ${d.imported} 个文件`, 100, 'success', '完成', `${d.total_chunks} chunks`)
+      } else if (d.op === 'delete') {
+        showProgress(`批量删除完成: ${d.deleted} 个文件`, 100, 'success', '完成', `删除 ${d.deleted} 个文件`)
+      }
     }
-    done++
-    showProgress(`[${done}/${docs.length}] 完成`, Math.round(done / docs.length * 100))
+  })
+})
+
+onUnmounted(() => {
+  if (ws) {
+    ws.close()
   }
-  addLog(`导入结束: 成功 ${success}，失败 ${failed}，共 ${done}/${docs.length}`, success > 0 ? 'success' : 'error')
-  showProgress(`导入完成 (${success}/${docs.length})`, 100, failed === 0 ? 'success' : 'exception')
-  importingLock.value = false
-  currentAction.value = ''
-  loadLocalDocs(); loadVectorDocs()
-}
-
-const deleteVectorDoc = async (doc) => {
-  try {
-    await ElMessageBox.confirm(`确定从向量库删除 ${getFileName(doc.source)}？`, '确认', { type: 'warning' })
-    const r = await deleteVectorDocApi(doc.source)
-    if (r.status === 'success') { ElMessage.success(r.message); loadLocalDocs(); loadVectorDocs() }
-    else ElMessage.error(r.message)
-  } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
-}
-
-const deleteSelectedVector = async () => {
-  if (!selectedVector.value.length) return
-  try {
-    await ElMessageBox.confirm(`确定删除选中的 ${selectedVector.value.length} 个文档？`, '警告', { type: 'warning' })
-    for (const doc of selectedVector.value) await deleteVectorDocApi(doc.source)
-    ElMessage.success('删除完成'); loadLocalDocs(); loadVectorDocs()
-  } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
-}
-
-const deleteAllVector = async () => {
-  if (!vectorDocs.value.length) return
-  try {
-    await ElMessageBox.confirm(`确定清空整个向量库（${vectorDocs.value.length} 个文档）？`, '警告', { type: 'warning' })
-    for (const doc of vectorDocs.value) await deleteVectorDocApi(doc.source)
-    ElMessage.success('向量库已清空'); loadLocalDocs(); loadVectorDocs()
-  } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
-}
-
-const uploadFiles = async () => {
-  if (!uploadFileList.value.length) return
-  uploadLoading.value = true
-  showProgress('上传中...', 0)
-  progressLogs.value = []
-  let done = 0
-  for (const file of uploadFileList.value) {
-    addLog(`上传: ${file.name}`)
-    try { await uploadDocument(file); addLog(`  完成`, 'success') } catch { addLog(`  失败`, 'error') }
-    done++
-    showProgress(`上传中... (${done}/${uploadFileList.value.length})`, Math.round(done / uploadFileList.value.length * 100))
-  }
-  showProgress('上传完成', 100, 'success')
-  uploadFileList.value = []; uploadLoading.value = false
-  loadLocalDocs()
-}
-
-const refreshLocal = () => { localPage.value = 1; loadLocalDocs() }
-const refreshVector = () => { vectorPage.value = 1; loadVectorDocs() }
-
-onMounted(() => { loadLocalDocs(); loadVectorDocs() })
+})
 </script>
 
 <style scoped>
-.documents { max-width: 1200px; margin: 0 auto; }
-h1 { margin-bottom: 20px; color: #303133; }
-.tab-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
-.vector-summary { margin-left: auto; color: #909399; font-size: 14px; }
-.upload-drop {
-  border: 2px dashed #dcdfe6; border-radius: 8px; padding: 25px 40px;
-  text-align: center; cursor: pointer; transition: border-color 0.3s;
+.documents-page {
+  max-width: 1200px;
+  margin: 0 auto;
 }
-.upload-drop:hover { border-color: #409eff; }
-.upload-icon { font-size: 40px; color: #c0c4cc; }
-.upload-text { color: #606266; margin: 8px 0; }
-.upload-buttons { display: flex; gap: 10px; justify-content: center; margin-top: 8px; }
-.upload-info { margin-top: 10px; display: flex; align-items: center; }
-.pagination-bar { display: flex; justify-content: center; margin-top: 15px; }
-.progress-card { margin-top: 20px; }
-.progress-header { display: flex; justify-content: space-between; align-items: center; }
-.log-window {
-  margin-top: 15px; max-height: 300px; overflow-y: auto;
-  background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 6px;
-  font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; line-height: 1.6;
+
+.page-header {
+  margin-bottom: 20px;
 }
-.log-line { display: flex; gap: 10px; }
-.log-time { color: #6a9955; white-space: nowrap; }
-.log-msg { color: #d4d4d4; }
-.log-error { color: #f44747; }
-.log-success { color: #6a9955; }
-.log-empty { color: #808080; font-style: italic; }
+
+.page-header h2 {
+  font-size: 24px;
+  color: #303133;
+  margin-bottom: 8px;
+}
+
+.page-header p {
+  font-size: 14px;
+  color: #909399;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.toolbar-left, .toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progress-section {
+  margin-bottom: 16px;
+  padding: 16px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.progress-current, .progress-step {
+  font-size: 14px;
+  color: #303133;
+}
+
+.upload-area {
+  margin-bottom: 16px;
+  border: 2px dashed #dcdfe6;
+  border-radius: 8px;
+  padding: 40px;
+  text-align: center;
+  transition: all 0.3s;
+  cursor: pointer;
+  background: #fafafa;
+}
+
+.upload-area:hover,
+.upload-area.is-dragover {
+  border-color: #409eff;
+  background-color: #ecf5ff;
+}
+
+.upload-area .el-icon--upload {
+  font-size: 48px;
+  color: #c0c4cc;
+  margin-bottom: 12px;
+}
+
+.upload-area .el-upload__text {
+  font-size: 14px;
+  color: #606266;
+  margin-bottom: 12px;
+}
+
+.upload-area .el-upload__text em {
+  color: #409eff;
+  font-style: normal;
+}
+
+.upload-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.upload-area .el-upload__tip {
+  font-size: 12px;
+  color: #909399;
+}
+
+.pagination-container {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.crawl-section {
+  padding: 20px;
+}
+
+.crawl-section h3 {
+  margin-bottom: 8px;
+  color: #303133;
+}
+
+.crawl-section p {
+  margin-bottom: 16px;
+  color: #909399;
+}
 </style>

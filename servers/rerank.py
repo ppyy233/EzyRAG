@@ -55,7 +55,7 @@ def detect_device():
             logger.info(f"检测到 GPU: {name}")
             return "cuda"
     except ImportError:
-        pass
+        logger.warning("torch 未安装，本地模型需要运行: uv sync --extra local")
     logger.info("使用 CPU")
     return "cpu"
 
@@ -89,7 +89,11 @@ def load_model(model_path: str = None):
         sys.exit(1)
     
     logger.info(f"加载重排模型: {load_path}")
-    from sentence_transformers import CrossEncoder
+    try:
+        from sentence_transformers import CrossEncoder
+    except ImportError:
+        logger.error("sentence-transformers 未安装，本地模型无法加载。请运行: uv sync --extra local")
+        sys.exit(1)
     device = detect_device()
     _model = CrossEncoder(load_path, device=device, trust_remote_code=True)
     logger.info("重排模型就绪")

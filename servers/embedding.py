@@ -27,8 +27,12 @@ import argparse
 import logging
 from pathlib import Path
 from typing import Union
+from contextlib import nullcontext
 
-import torch
+try:
+    import torch
+except ImportError:
+    torch = None
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -60,20 +64,23 @@ _model_name = None
 
 
 def detect_device():
-    try:
-        import torch
-        if torch.cuda.is_available():
-            name = torch.cuda.get_device_name(0)
-            logger.info(f"检测到 GPU: {name}")
-            return "cuda"
-    except ImportError:
-        pass
+    if torch is None:
+        logger.warning("torch 未安装，本地模型需要运行: uv sync --extra local")
+        return "cpu"
+    if torch.cuda.is_available():
+        name = torch.cuda.get_device_name(0)
+        logger.info(f"检测到 GPU: {name}")
+        return "cuda"
     logger.info("使用 CPU")
     return "cpu"
 
 
 def load_model(model_path: str = None):
     global _model, _model_name
+    
+    if torch is None:
+        logger.error("torch 未安装，本地模型无法加载。请运行: uv sync --extra local")
+        sys.exit(1)
     
     # 优先使用传入的模型路径，否则从环境变量读取
     load_path = model_path or os.getenv("EMBEDDING_LOCAL_MODEL_PATH", "")
@@ -89,7 +96,11 @@ def load_model(model_path: str = None):
     load_path = str(model_dir)
     
     logger.info(f"加载 Embedding 模型: {load_path}")
-    from sentence_transformers import SentenceTransformer
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        logger.error("sentence-transformers 未安装，本地模型无法加载。请运行: uv sync --extra local")
+        sys.exit(1)
     device = detect_device()
     _model = SentenceTransformer(load_path, device=device, trust_remote_code=True)
     _model_name = load_path
@@ -138,7 +149,7 @@ async def create_embeddings(req: EmbeddingRequest):
         # 逐条处理，避免大批量导致显存爆炸
         all_embeddings = []
         for text in texts:
-            with torch.no_grad():
+            with torch.no_grad() if torch else nullcontext():
                 emb = _model.encode([text], show_progress_bar=False)
             all_embeddings.append(emb[0])
         
@@ -157,14 +168,14 @@ async def create_embeddings(req: EmbeddingRequest):
             result = [emb.tolist() for emb in all_embeddings]
         
         del all_embeddings
-        if torch.cuda.is_available():
+        if torch and torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
         
         elapsed = time.time() - t0
         total_chars = sum(len(t) for t in texts)
         vram = "N/A"
-        if torch.cuda.is_available():
+        if torch and torch.cuda.is_available():
             vram_mb = torch.cuda.memory_allocated() // 1024 // 1024
             vram = f"{vram_mb} MiB"
         logger.info(f"embed: {len(texts)} texts, {total_chars} chars, {elapsed:.2f}s, VRAM={vram}")
@@ -188,8 +199,7 @@ async def create_embeddings(req: EmbeddingRequest):
         }
     except Exception as e:
         logger.error(f"Embedding 失败: {e}")
-        # 异常时也清理GPU缓存
-        if torch.cuda.is_available():
+        if torch and torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
         return JSONResponse({"error": str(e)}, status_code=500)

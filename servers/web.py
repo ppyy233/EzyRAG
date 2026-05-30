@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional, Any
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -83,6 +84,9 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# 线程池，用于执行同步/重建等耗时操作
+executor = ThreadPoolExecutor(max_workers=2)
+
 # ============================================================
 #  数据模型
 # ============================================================
@@ -142,7 +146,7 @@ def get_service_status() -> dict:
     
     embedding_mode = os.getenv("EMBEDDING_MODE", "cloud")
     rerank_enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
-    rerank_mode = os.getenv("RERANK_MODE", "local")
+    rerank_mode = os.getenv("RERANK_MODE", "cloud")
     
     services = {
         "chromadb": {
@@ -235,7 +239,7 @@ def connect_chroma():
             "hnsw:space": hnsw_config["space"],
             "hnsw:sync_threshold": hnsw_config["sync_threshold"],
             "hnsw:ef_construction": hnsw_config["ef_construction"],
-            "hnsw:max_neighbors": hnsw_config["max_neighbors"],
+            "hnsw:M": hnsw_config["M"],
         }
         collection = client.get_or_create_collection(
             name=collection_name,
@@ -426,7 +430,7 @@ async def update_config(update: ConfigUpdate):
             
             f.write("# ----- Rerank 配置 -----\n")
             f.write(f"RERANK_ENABLED={env_config.get('RERANK_ENABLED', 'true')}\n")
-            f.write(f"RERANK_MODE={env_config.get('RERANK_MODE', 'local')}\n\n")
+            f.write(f"RERANK_MODE={env_config.get('RERANK_MODE', 'cloud')}\n\n")
             f.write("# 云端配置\n")
             for key in ['RERANK_CLOUD_URL', 'RERANK_CLOUD_API_KEY', 'RERANK_CLOUD_MODEL']:
                 f.write(f"{key}={env_config.get(key, '')}\n")
@@ -690,6 +694,27 @@ async def import_all_documents():
     except Exception as e:
         return ApiResponse(status="error", message=str(e))
 
+@app.post("/api/documents/upload")
+async def upload_documents(files: List[UploadFile] = File(...)):
+    """上传文件到 data/docs 目录"""
+    try:
+        docs_dir = ROOT / "data" / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        
+        uploaded = []
+        for file in files:
+            file_path = docs_dir / file.filename
+            content = await file.read()
+            with open(file_path, "wb") as f:
+                f.write(content)
+            uploaded.append(file.filename)
+            logger.info(f"上传文件: {file.filename}")
+        
+        return ApiResponse(status="success", data={"uploaded": uploaded, "count": len(uploaded)})
+    except Exception as e:
+        logger.error(f"上传失败: {e}")
+        return ApiResponse(status="error", message=str(e))
+
 @app.delete("/api/documents/{file_path:path}")
 async def delete_document(file_path: str):
     try:
@@ -700,6 +725,71 @@ async def delete_document(file_path: str):
         return ApiResponse(status="success", message=f"已删除: {file_path}")
     except Exception as e:
         logger.error(f"删除失败: {file_path}, 错误: {e}")
+        return ApiResponse(status="error", message=str(e))
+
+@app.post("/api/documents/delete-all")
+async def delete_all_documents(request: dict):
+    """删除所有文档的向量记录"""
+    try:
+        source = request.get("source", "all")
+        _, db = connect_chroma()
+        
+        # 根据数据源获取文档列表
+        docs = db.list_documents()
+        if source == "docs":
+            docs = [d for d in docs if d.get("source_type") == "local_file" and "/data/web/" not in d["source"].replace("\\", "/")]
+        elif source == "web":
+            docs = [d for d in docs if "/data/web/" in d["source"].replace("\\", "/") or "\\data\\web\\" in d["source"]]
+        
+        deleted = 0
+        for doc in docs:
+            try:
+                db.delete(doc["source"])
+                deleted += 1
+                logger.info(f"删除: {doc['source_name']}")
+            except Exception as e:
+                logger.warning(f"删除失败: {doc['source_name']}, 错误: {e}")
+        
+        logger.info(f"完全删除完成: {deleted} 个文档")
+        return ApiResponse(status="success", data={"deleted": deleted})
+    except Exception as e:
+        logger.error(f"完全删除失败: {e}")
+        return ApiResponse(status="error", message=str(e))
+
+@app.post("/api/documents/update")
+async def update_document(request: dict):
+    """更新单个文档"""
+    try:
+        file_path = request.get("file_path", "")
+        if not file_path:
+            return ApiResponse(status="error", message="未指定文件路径")
+        
+        from core.document import read_file, SUPPORTED_EXT
+        
+        full_path = Path(file_path)
+        if not full_path.exists():
+            return ApiResponse(status="error", message="文件不存在")
+        
+        ext = full_path.suffix.lower()
+        if ext not in SUPPORTED_EXT:
+            return ApiResponse(status="error", message=f"不支持的格式: {ext}")
+        
+        text = read_file(str(full_path))
+        if not text or not text.strip():
+            return ApiResponse(status="error", message="文件内容为空")
+        
+        doc_name = full_path.stem
+        text = f"[文件名: {doc_name}]\n{text}"
+        doc = {"path": str(full_path), "text": text}
+        
+        _, db = connect_chroma()
+        chunk_cfg = get_chunk_config()
+        count = db.update(doc, chunk_cfg, source_type="local_file")
+        
+        logger.info(f"更新成功: {file_path}, {count} chunks")
+        return ApiResponse(status="success", data={"chunks": count})
+    except Exception as e:
+        logger.error(f"更新失败: {e}")
         return ApiResponse(status="error", message=str(e))
 
 @app.post("/api/documents/sync")
@@ -733,23 +823,47 @@ async def sync_documents(request: dict):
         
         logger.info(f"共加载 {len(documents)} 份文档")
         
-        # 进度回调
-        async def on_progress(op, idx, total, name, count):
-            if op == "copy":
-                logger.info(f"复制进度: {idx}/{total}")
-            elif op == "add":
-                logger.info(f"[{idx}/{total}] +新增: {name} ({count} chunks)")
-            elif op == "update":
-                logger.info(f"[{idx}/{total}] ~更新: {name} ({count} chunks)")
-            elif op == "delete":
-                logger.info(f"-删除: {name}")
-            
-            await manager.broadcast({
-                "type": "sync_progress",
-                "data": {"op": op, "idx": idx, "total": total, "name": name, "count": count}
-            })
+        # 创建进度队列
+        progress_queue = asyncio.Queue()
+        loop = asyncio.get_event_loop()
         
-        stats = db.sync(documents, chunk_cfg, on_progress=on_progress)
+        # 进度回调（在工作线程中调用）
+        def on_progress(op, idx, total, name, count):
+            try:
+                loop.call_soon_threadsafe(
+                    progress_queue.put_nowait,
+                    {"op": op, "idx": idx, "total": total, "name": name, "count": count}
+                )
+            except Exception:
+                pass
+        
+        # 异步进度推送协程
+        async def push_progress():
+            while True:
+                try:
+                    msg = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+                    if msg.get("done"):
+                        break
+                    await manager.broadcast({
+                        "type": "sync_progress",
+                        "data": msg
+                    })
+                except asyncio.TimeoutError:
+                    continue
+                except Exception:
+                    break
+        
+        push_task = asyncio.create_task(push_progress())
+        
+        # 在线程池中执行同步（避免阻塞事件循环）
+        stats = await loop.run_in_executor(
+            executor,
+            lambda: db.sync(documents, chunk_cfg, on_progress=on_progress)
+        )
+        
+        # 通知进度推送结束
+        progress_queue.put_nowait({"done": True})
+        await push_task
         
         logger.info(f"同步完成: 新增={stats['added']}, 更新={stats['updated']}, 未变={stats['unchanged']}, 删除={stats['deleted']}")
         
@@ -794,19 +908,54 @@ async def rebuild_documents(request: dict):
         
         logger.info(f"共加载 {len(documents)} 份文档")
         
-        # 进度回调
-        async def on_progress(op, idx, total, name, count):
-            if op == "rebuild":
-                logger.info(f"[{idx}/{total}] {name} ({count} chunks)")
-            
-            await manager.broadcast({
-                "type": "rebuild_progress",
-                "data": {"op": op, "idx": idx, "total": total, "name": name, "count": count}
-            })
+        # 创建进度队列
+        progress_queue = asyncio.Queue()
+        loop = asyncio.get_event_loop()
         
-        count = db.rebuild(documents, chunk_cfg, on_progress=on_progress)
+        # 进度回调（在工作线程中调用）
+        def on_progress(op, idx, total, name, count):
+            try:
+                loop.call_soon_threadsafe(
+                    progress_queue.put_nowait,
+                    {"op": op, "idx": idx, "total": total, "name": name, "count": count}
+                )
+            except Exception:
+                pass
+        
+        # 异步进度推送协程
+        async def push_progress():
+            while True:
+                try:
+                    msg = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+                    if msg.get("done"):
+                        break
+                    await manager.broadcast({
+                        "type": "rebuild_progress",
+                        "data": msg
+                    })
+                except asyncio.TimeoutError:
+                    continue
+                except Exception:
+                    break
+        
+        push_task = asyncio.create_task(push_progress())
+        
+        # 在线程池中执行重建（避免阻塞事件循环）
+        count = await loop.run_in_executor(
+            executor,
+            lambda: db.rebuild(documents, chunk_cfg, on_progress=on_progress)
+        )
+        
+        # 通知进度推送结束
+        progress_queue.put_nowait({"done": True})
+        await push_task
         
         logger.info(f"重建完成: {count} chunks")
+        
+        await manager.broadcast({
+            "type": "rebuild_complete",
+            "data": {"chunks": count, "documents": len(documents)}
+        })
         
         return ApiResponse(
             status="success",
@@ -823,7 +972,8 @@ async def clean_orphan_records(request: dict):
         
         _, db = connect_chroma()
         
-        # 根据数据源获取目�?        dirs = []
+        # 根据数据源获取目录
+        dirs = []
         if source in ("all", "docs"):
             docs_dir = str(ROOT / "data" / "docs")
             dirs.append(docs_dir)
@@ -1187,7 +1337,7 @@ async def start_service(request: ServiceAction):
             chroma_port = int(os.getenv("CHROMA_SERVER_PORT", "9898"))
             if not check_port(host, chroma_port):
                 subprocess.Popen([sys.executable, "-m", "servers.chroma"], cwd=ROOT)
-                    results.append("ChromaDB 启动中")
+                results.append("ChromaDB 启动中")
             
             if os.getenv("EMBEDDING_MODE", "cloud") == "local":
                 emb_url = os.getenv("EMBEDDING_LOCAL_URL", "http://127.0.0.1:1234/v1/embeddings")
@@ -1218,7 +1368,7 @@ async def start_service(request: ServiceAction):
         else:
             return ApiResponse(status="error", message=f"未知服务: {service}")
         
-            return ApiResponse(status="success", message=f"{service} 启动中")
+        return ApiResponse(status="success", message=f"{service} 启动中")
     except Exception as e:
         return ApiResponse(status="error", message=str(e))
 

@@ -23,6 +23,7 @@ import Navbar from './components/Navbar.vue'
 body {
   font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB',
     'Microsoft YaHei', '微软雅黑', Arial, sans-serif;
+  background-color: #f0f2f5;
 }
 
 .app-container {
@@ -30,14 +31,15 @@ body {
 }
 
 .el-header {
-  background-color: #545c64;
+  background-color: #304156;
   color: #fff;
   line-height: 60px;
-  padding: 0 20px;
+  padding: 0;
+  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
 }
 
 .el-main {
-  background-color: #f5f5f5;
+  background-color: #f0f2f5;
   padding: 20px;
 }
 </style>

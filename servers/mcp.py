@@ -59,7 +59,7 @@ _env_file = ROOT / "config" / ".env"
 
 
 def _init_services():
-    """初始化所有服�?""
+    """初始化所有服务"""
     global _emb_api, _rerank_api, _scheduler, _env_mtime
     from core.api import EmbeddingAPI, RerankAPI
     from core.scheduler import get_scheduler
@@ -72,13 +72,13 @@ def _init_services():
 
 
 def _check_config_reload():
-    """检�?.env 是否变化，如果变了就重新加载"""
+    """检查 .env 是否变化，如果变了就重新加载"""
     global _emb_api, _rerank_api, _scheduler, _env_mtime
     if not _env_file.exists():
         return
     current_mtime = _env_file.stat().st_mtime
     if current_mtime != _env_mtime:
-        logger.info("检测到 .env 变化，重新加载配�?..")
+        logger.info("检测到 .env 变化，重新加载配置...")
         from dotenv import load_dotenv
         load_dotenv(_env_file, override=True)
         from core.api import EmbeddingAPI, RerankAPI
@@ -103,7 +103,7 @@ async def _get_collection():
         try:
             _chroma_collection = await _chroma_client.get_collection(name=current)
         except Exception:
-            logger.warning(f"集合 {current} 不存在，回退�?{COLLECTION_NAME}")
+            logger.warning(f"集合 {current} 不存在，回退到 {COLLECTION_NAME}")
             _chroma_collection = await _chroma_client.get_or_create_collection(
                 name=COLLECTION_NAME,
                 metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 100},
@@ -115,16 +115,16 @@ async def _get_collection():
 
 
 async def search_async(query: str) -> str:
-    """搜索知识�?""
+    """搜索知识库"""
     t0 = time.time()
     _check_config_reload()
-    # 健康检�?
+    # 健康检查
     ok, err = _emb_api.health_check()
     if not ok:
-        return f"[错误] Embedding 服务不可�? {err}\n请启动服务后重试�?
+        return f"[错误] Embedding 服务不可用: {err}\n请启动服务后重试。"
 
     try:
-        # 向量化查�?
+        # 向量化查询
         vectors = await _scheduler.embed_async([query], priority=0)
         query_vec = vectors[0]
 
@@ -140,7 +140,7 @@ async def search_async(query: str) -> str:
         )
 
         if not results or not results["ids"] or not results["ids"][0]:
-            return "知识库中未找到相关内容�?
+            return "知识库中未找到相关内容。"
 
         ids = results["ids"][0]
         docs = results["documents"][0]
@@ -172,21 +172,21 @@ async def search_async(query: str) -> str:
             dists = dists[:RETRIEVAL_K]
             ids = ids[:RETRIEVAL_K]
 
-        # 格式化结�?
+        # 格式化结果
         if rerank_executed:
             score_str = ", ".join([f"{s:.2f}" for s in rerank_scores])
-            parts = [f"找到 {len(docs)} 条相关文档（已重�?| 分数: {score_str}�?\n"]
+            parts = [f"找到 {len(docs)} 条相关文档（已重排）| 分数: {score_str}\n"]
         else:
-            parts = [f"找到 {len(docs)} 条相关文�?\n"]
+            parts = [f"找到 {len(docs)} 条相关文档\n"]
 
         for i, (doc_id, doc_text, meta, dist) in enumerate(zip(ids, docs, metas, dists), 1):
             source = meta.get("source", "未知来源")
             fname = os.path.basename(source)
             similarity = max(0, 1 - dist)
-            part = f"[{i}] 来源: {fname} | 相似�? {similarity:.2%}\n{doc_text.strip()}"
+            part = f"[{i}] 来源: {fname} | 相似度: {similarity:.2%}\n{doc_text.strip()}"
             parts.append(part)
         elapsed = time.time() - t0
-        logger.info(f"search: '{query[:50]}' �?{len(docs)} results, rerank={rerank_executed}, {elapsed:.2f}s")
+        logger.info(f"search: '{query[:50]}' => {len(docs)} results, rerank={rerank_executed}, {elapsed:.2f}s")
         return "\n\n".join(parts)
 
     except Exception as e:
@@ -200,7 +200,7 @@ async def search_async(query: str) -> str:
 
 @app.get("/health")
 async def health_check():
-    """健康检�?""
+    """健康检查"""
     _check_config_reload()
     emb_ok, emb_err = _emb_api.health_check() if _emb_api else (False, "未初始化")
     rerank_ok, rerank_err = _rerank_api.health_check() if _rerank_api else (False, "未初始化")
@@ -242,13 +242,13 @@ async def mcp_endpoint(request: Request):
             "result": {
                 "tools": [{
                     "name": "search_knowledge_base",
-                    "description": "【优先调用】遇到以下情况应优先使用此工具搜索本地知识库：① 用户询问的信息可能属于个人私有数据或特定工作环境；② 问题涉及你训练数据中可能不存在的特定人物、地点或事件；③ 你对答案不确定，需要从本地文档中查找事实依据。调用此工具来检索本地知识库中的文档信息�?,
+                    "description": "【优先调用】遇到以下情况应优先使用此工具搜索本地知识库：① 用户询问的信息可能属于个人私有数据或特定工作环境；② 问题涉及你训练数据中可能不存在的特定人物、地点或事件；③ 你对答案不确定，需要从本地文档中查找事实依据。调用此工具来检索本地知识库中的文档信息。",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "要搜索的问题或关键词，使用中文或英文均可�?
+                                "description": "要搜索的问题或关键词，使用中文或英文均可。"
                             }
                         },
                         "required": ["query"]
@@ -308,16 +308,16 @@ async def mcp_endpoint(request: Request):
 
 
 def main():
-    """启动 MCP 服务�?""
+    """启动 MCP 服务器"""
     _init_services()
 
     emb_info = _emb_api.get_info()
     rerank_info = _rerank_api.get_info()
 
     logger.info("=" * 50)
-    logger.info("Ezy-RAG MCP Server V1.0.0 启动�?..")
-    logger.info(f"Embedding: {emb_info['mode']} ({emb_info['model']}, {emb_info['dim']}�?")
-    logger.info(f"Rerank: {'启用' if rerank_info['enabled'] else '未启�?} ({rerank_info['mode']})")
+    logger.info("Ezy-RAG MCP Server V1.0.0 启动中...")
+    logger.info(f"Embedding: {emb_info['mode']} ({emb_info['model']}, {emb_info['dim']}维)")
+    logger.info(f"Rerank: {'启用' if rerank_info['enabled'] else '未启用'} ({rerank_info['mode']})")
     logger.info(f"ChromaDB: {os.getenv('CHROMA_SERVER_HOST', '127.0.0.1')}:{os.getenv('CHROMA_SERVER_PORT', '9898')}")
     logger.info(f"监听: http://{os.getenv('MCP_SERVER_HOST', '127.0.0.1')}:{os.getenv('MCP_SERVER_PORT', '9766')}")
     logger.info("=" * 50)

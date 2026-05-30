@@ -160,16 +160,32 @@ def print_separator():
 
 
 def progress_bar(current: int, total: int, prefix: str = "", suffix: str = ""):
-    """进度条"""
+    """进度条
+    
+    使用 sys.stdout 确保在 Windows 终端中正常显示
+    """
+    import sys
+    
     if total == 0:
         return
+    
     percent = current / total
     bar_length = 30
     filled = int(bar_length * percent)
-    bar = "█" * filled + "░" * (bar_length - filled)
-    print(f"\r  {prefix} [{bar}] {current}/{total} {suffix}", end="", flush=True)
+    bar = "=" * filled + "-" * (bar_length - filled)
+    
+    # 截断过长的 suffix
+    max_suffix_len = 30
+    if len(suffix) > max_suffix_len:
+        suffix = suffix[:max_suffix_len-3] + "..."
+    
+    # 使用 sys.stdout.write 确保立即刷新
+    sys.stdout.write(f"\r  {prefix} [{bar}] {current}/{total} {suffix}   ")
+    sys.stdout.flush()
+    
     if current == total:
-        print()  # 完成时换行
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
 def select_data_source(prompt: str = "选择数据源") -> str:
     """数据源选择交互

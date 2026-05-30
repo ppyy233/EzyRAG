@@ -78,13 +78,24 @@ def get_chunk_templates() -> dict:
 
 
 def get_hnsw_config() -> dict:
-    """获取 HNSW 索引配置"""
+    """获取 HNSW 索引配置
+    
+    ChromaDB 1.5.9 支持的参数：
+    - space: 距离函数 (cosine/l2/ip)
+    - sync_threshold: 同步阈值
+    - M: 最大邻居数
+    - batch_size: 批处理大小
+    
+    不支持的参数（保留配置供未来使用）：
+    - ef_construction: 构建时候选列表大小
+    - ef_search: 搜索时候选列表大小
+    """
     config = load_config()
     defaults = {
         "space": "cosine",
         "ef_construction": 100,
         "ef_search": 100,
-        "max_neighbors": 16,
+        "M": 16,
         "sync_threshold": 1000,
         "batch_size": 100,
     }
@@ -93,7 +104,23 @@ def get_hnsw_config() -> dict:
     for key, value in defaults.items():
         if key not in hnsw:
             hnsw[key] = value
+    # 兼容旧配置：max_neighbors -> M
+    if "max_neighbors" in hnsw and "M" not in hnsw:
+        hnsw["M"] = hnsw.pop("max_neighbors")
     return hnsw
+
+
+def get_chroma_hnsw_metadata() -> dict:
+    """获取 ChromaDB 支持的 HNSW 元数据
+    
+    只返回当前 ChromaDB 版本 (1.5.9) 支持的参数
+    """
+    hnsw = get_hnsw_config()
+    return {
+        "hnsw:space": hnsw["space"],
+        "hnsw:sync_threshold": hnsw["sync_threshold"],
+        "hnsw:M": hnsw["M"],
+    }
 
 
 def get_retrieval_config() -> dict:

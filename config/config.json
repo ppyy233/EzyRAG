@@ -71,7 +71,7 @@
       },
       "custom": {
         "name": "自定义模板",
-        "chunk_size": 1000,
+        "chunk_size": 500,
         "overlap": 100,
         "strategy": "recursive",
         "separators": [
@@ -82,13 +82,13 @@
         ]
       }
     },
-    "default_template": "academic"
+    "default_template": "custom"
   },
   "hnsw": {
     "space": "cosine",
     "ef_construction": 100,
     "ef_search": 100,
-    "max_neighbors": 16,
+    "M": 16,
     "sync_threshold": 1000,
     "batch_size": 100
   },

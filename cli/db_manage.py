@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -20,6 +21,59 @@ from cli.cli_core import (
     connect_chroma, get_local_documents, get_database_stats, 
     get_document_list, reload_env
 )
+
+
+def get_optimal_workers() -> int:
+    """根据硬件条件自动检测最优并发数
+    
+    文件读取是 I/O 密集型，可以使用比 CPU 核心数更多的线程
+    """
+    cpu_count = os.cpu_count() or 4
+    # 经验公式：CPU 核心数 * 2，但不超过 16
+    optimal = min(cpu_count * 2, 16)
+    return max(2, optimal)
+
+
+def read_files_parallel(paths: list, max_workers: int = None) -> tuple:
+    """多线程并行读取文件
+    
+    Args:
+        paths: 文件路径列表
+        max_workers: 并发线程数，None 则自动检测
+        
+    Returns:
+        (documents, errors) - 文档列表和错误列表
+    """
+    from core.document import read_file
+    
+    if max_workers is None:
+        max_workers = get_optimal_workers()
+    
+    documents = []
+    errors = []
+    
+    def read_single_file(path):
+        try:
+            text = read_file(path)
+            if text.strip():
+                doc_name = Path(path).stem
+                text = f"[文件名: {doc_name}]\n{text}"
+                return {"type": "success", "path": path, "text": text}
+            return None
+        except Exception as e:
+            return {"type": "error", "path": path, "message": str(e)}
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(read_single_file, p): p for p in paths}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                if result["type"] == "error":
+                    errors.append(result)
+                else:
+                    documents.append({"path": result["path"], "text": result["text"]})
+    
+    return documents, errors
 
 
 def find_doc_in_docs(filename: str) -> str | None:
@@ -292,6 +346,50 @@ def delete_documents_batch():
         log_error(f"连接数据库失败: {e}")
 
 
+def delete_all_documents():
+    """删除所有向量记录"""
+    log_step("删除所有向量记录")
+    
+    try:
+        _, db = connect_chroma()
+        
+        # 获取所有文档
+        docs = db.list_documents()
+        if not docs:
+            log_info("向量库为空")
+            return
+        
+        total_chunks = sum(d["chunks"] for d in docs)
+        log_info(f"找到 {len(docs)} 个文档，共 {total_chunks} 个向量块")
+        
+        # 显示文档列表
+        for d in docs[:10]:  # 只显示前10个
+            log_info(f"  - {d['source_name']} ({d['chunks']} chunks)")
+        if len(docs) > 10:
+            log_info(f"  ... 还有 {len(docs) - 10} 个文档")
+        
+        if not confirm("确定删除所有向量记录？此操作不可恢复", default=False):
+            return
+        
+        # 删除所有文档
+        success = 0
+        failed = 0
+        for i, d in enumerate(docs, 1):
+            try:
+                db.delete(d["source"])
+                success += 1
+                progress_bar(i, len(docs), prefix="删除中", suffix=d["source_name"])
+            except Exception as e:
+                failed += 1
+                log_error(f"删除失败: {d['source_name']} - {e}")
+        
+        print()
+        log_ok(f"全部删除完成: {success} 成功, {failed} 失败")
+        
+    except Exception as e:
+        log_error(f"删除失败: {e}")
+
+
 def crawl_webpage():
     """爬取单个网页"""
     from core.utils import md5_short
@@ -453,8 +551,9 @@ def crawl_webpages_batch():
 
 def sync_documents(source: str = "all"):
     """同步文档（对比 hash，自动增删改）"""
-    from core.document import load_all_documents
+    from core.document import get_document_paths
     from config.settings import get_chunk_config
+    from core.utils import content_hash
     
     log_step("同步文档...")
     
@@ -462,26 +561,58 @@ def sync_documents(source: str = "all"):
         _, db = connect_chroma()
         chunk_cfg = get_chunk_config()
         
-        # 根据数据源加载文档
+        # 根据数据源获取文档路径
         dirs = []
         if source in ("all", "docs"):
             dirs.append(ROOT / "data" / "docs")
         if source in ("all", "web"):
             dirs.append(ROOT / "data" / "web")
         
-        documents = load_all_documents(*dirs)
+        paths = get_document_paths(*dirs)
         
-        if not documents:
+        if not paths:
             log_info("没有本地文档")
             return
         
-        # 显示加载信息
+        # 显示文件数量信息
         if source == "all":
-            docs_count = len(load_all_documents(ROOT / "data" / "docs"))
-            web_count = len(load_all_documents(ROOT / "data" / "web"))
-            log_info(f"加载 {len(documents)} 个文档 ({docs_count} docs + {web_count} web)")
+            docs_paths = get_document_paths(ROOT / "data" / "docs")
+            web_paths = get_document_paths(ROOT / "data" / "web")
+            log_info(f"找到 {len(paths)} 个文档 ({len(docs_paths)} docs + {len(web_paths)} web)")
         else:
-            log_info(f"加载 {len(documents)} 个文档")
+            log_info(f"找到 {len(paths)} 个文档")
+        
+        # 计算差异（不读取文件内容）
+        current_sources = set(paths)
+        stored_sources = db.list_sources()
+        new_sources = current_sources - stored_sources
+        common_sources = current_sources & stored_sources
+        delete_sources = stored_sources - current_sources
+        
+        # 多线程读取需要处理的文件（带进度条）
+        files_to_read = [p for p in paths if p in new_sources or p in common_sources]
+        total_to_read = len(files_to_read)
+        
+        if total_to_read > 0:
+            log_info(f"读取 {total_to_read} 个文件...")
+            workers = get_optimal_workers()
+            log_info(f"使用 {workers} 个线程并行读取")
+            
+            start_time = time.time()
+            documents, errors = read_files_parallel(files_to_read, max_workers=workers)
+            read_time = time.time() - start_time
+            
+            print()  # 换行
+            if errors:
+                log_warn(f"读取失败: {len(errors)} 个文件")
+                for err in errors[:5]:
+                    log_error(f"  - {Path(err['path']).name}: {err['message']}")
+            
+            log_info(f"读取完成: {len(documents)} 个文件, 耗时 {read_time:.1f} 秒")
+        else:
+            documents = []
+        
+        log_info(f"需要处理: {len(new_sources)} 新增, {len(common_sources)} 检查更新, {len(delete_sources)} 删除")
         
         # 进度回调
         def on_progress(op, idx, total, name, count):
@@ -492,7 +623,8 @@ def sync_documents(source: str = "all"):
             elif op == "delete":
                 log_info(f"删除: {name}")
         
-        stats = db.sync(documents, chunk_cfg, on_progress=on_progress)
+        # 传递 stored_sources 避免重复查询
+        stats = db.sync(documents, chunk_cfg, on_progress=on_progress, stored_sources=stored_sources)
         
         print()  # 换行
         if stats["added"] + stats["updated"] + stats["deleted"] == 0:
@@ -506,7 +638,7 @@ def sync_documents(source: str = "all"):
 
 def rebuild_documents(source: str = "all"):
     """全量重建向量库"""
-    from core.document import load_all_documents
+    from core.document import get_document_paths
     from config.settings import get_chunk_config
     
     if not confirm("确定要全量重建向量库？这将清空现有数据并重新处理所有文档", default=False):
@@ -518,26 +650,45 @@ def rebuild_documents(source: str = "all"):
         _, db = connect_chroma()
         chunk_cfg = get_chunk_config()
         
-        # 根据数据源加载文档
+        # 根据数据源获取文件路径
         dirs = []
         if source in ("all", "docs"):
             dirs.append(ROOT / "data" / "docs")
         if source in ("all", "web"):
             dirs.append(ROOT / "data" / "web")
         
-        documents = load_all_documents(*dirs)
+        paths = get_document_paths(*dirs)
         
-        if not documents:
+        if not paths:
             log_info("没有本地文档")
             return
         
-        # 显示加载信息
+        # 显示文件数量信息
         if source == "all":
-            docs_count = len(load_all_documents(ROOT / "data" / "docs"))
-            web_count = len(load_all_documents(ROOT / "data" / "web"))
-            log_info(f"加载 {len(documents)} 个文档 ({docs_count} docs + {web_count} web)")
+            docs_paths = get_document_paths(ROOT / "data" / "docs")
+            web_paths = get_document_paths(ROOT / "data" / "web")
+            log_info(f"找到 {len(paths)} 个文档 ({len(docs_paths)} docs + {len(web_paths)} web)")
         else:
-            log_info(f"加载 {len(documents)} 个文档")
+            log_info(f"找到 {len(paths)} 个文档")
+        
+        # 多线程读取文件内容（带进度条）
+        log_info("读取文件内容...")
+        documents = []
+        errors = []
+        workers = get_optimal_workers()
+        log_info(f"使用 {workers} 个线程并行读取")
+        
+        start_time = time.time()
+        documents, errors = read_files_parallel(paths, max_workers=workers)
+        read_time = time.time() - start_time
+        
+        print()  # 换行
+        if errors:
+            log_warn(f"读取失败: {len(errors)} 个文件")
+            for err in errors[:5]:
+                log_error(f"  - {Path(err['path']).name}: {err['message']}")
+        
+        log_info(f"读取完成: {len(documents)} 个文件, 耗时 {read_time:.1f} 秒")
         
         # 进度回调
         def on_progress(op, idx, total, name, count):
@@ -608,6 +759,7 @@ def main():
             "批量添加",
             "删除文档",
             "批量删除",
+            "全部删除",
             "网页爬取",
             "同步文档",
             "全量重建",
@@ -627,6 +779,8 @@ def main():
         elif choice == 5:
             delete_documents_batch()
         elif choice == 6:
+            delete_all_documents()
+        elif choice == 7:
             # 网页爬取子菜单
             sub_choice = menu("网页爬取", [
                 "爬取单个网页",
@@ -637,18 +791,18 @@ def main():
                 crawl_webpage()
             elif sub_choice == 2:
                 crawl_webpages_batch()
-        elif choice == 7:
+        elif choice == 8:
             source = select_data_source("选择同步范围")
             sync_documents(source)
-        elif choice == 8:
+        elif choice == 9:
             source = select_data_source("选择重建范围")
             rebuild_documents(source)
-        elif choice == 9:
-            clean_orphan_records()
         elif choice == 10:
+            clean_orphan_records()
+        elif choice == 11:
             break
         
-        if choice != 10:
+        if choice != 11:
             from cli.ui import pause
             pause()
 

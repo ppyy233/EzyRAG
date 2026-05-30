@@ -1,60 +1,113 @@
 import axios from 'axios'
+import { ElMessage } from 'element-plus'
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 30000,
+  timeout: 60000,
   headers: {
     'Content-Type': 'application/json'
   }
 })
 
-// 响应拦截器
 api.interceptors.response.use(
-  response => response.data,
+  response => {
+    const data = response.data
+    if (data.status === 'error') {
+      ElMessage.error(data.message || '操作失败')
+      return Promise.reject(new Error(data.message))
+    }
+    return data
+  },
   error => {
     console.error('API Error:', error)
+    ElMessage.error(error.message || '网络错误')
     return Promise.reject(error)
   }
 )
 
-// 状态
-export const getStatus = () => api.get('/status')
-
-// 文档
-export const getDocuments = () => api.get('/documents')
-export const addDocument = (filePath) => api.post('/documents', { file_path: filePath })
-export const deleteDocument = (filePath) => api.delete('/documents', { data: { file_path: filePath } })
-export const updateDocument = (filePath) => api.put('/documents', { file_path: filePath })
-export const uploadDocument = (file) => {
-  const formData = new FormData()
-  formData.append('file', file)
-  return api.post('/documents/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  })
+// 系统
+export const systemApi = {
+  health: () => api.get('/system/health'),
+  status: () => api.get('/system/status')
 }
 
-// 同步
-export const syncDocuments = () => api.post('/sync')
-export const rebuildDatabase = () => api.post('/rebuild')
+// 配置
+export const configApi = {
+  get: () => api.get('/config'),
+  update: (data) => api.put('/config', data),
+  templates: () => api.get('/config/templates'),
+  getChunk: () => api.get('/config/chunk'),
+  updateChunk: (data) => api.put('/config/chunk', data)
+}
 
-// 向量库文档管理
-export const getVectorDocs = () => api.get('/vector-docs')
-export const deleteVectorDoc = (source) => api.delete('/vector-docs', { data: { source } })
-export const cancelVectorization = () => api.post('/documents/cancel')
+// 文档
+export const documentsApi = {
+  list: (source = 'all') => api.get(`/documents?source=${source}`),
+  upload: (files) => {
+    const formData = new FormData()
+    files.forEach(file => formData.append('files', file))
+    return api.post('/documents/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+  importFiles: (files) => api.post('/documents/import', { files }),
+  importAll: () => api.post('/documents/import-all'),
+  batchImport: (files) => api.post('/documents/batch-import', { files }),
+  delete: (filePath) => api.delete(`/documents/${encodeURIComponent(filePath)}`),
+  batchDelete: (files) => api.post('/documents/batch-delete', { files }),
+  deleteAll: (source = 'all') => api.post('/documents/delete-all', { source }),
+  updateFile: (filePath) => api.post('/documents/update', { file_path: filePath }),
+  sync: (source = 'all') => api.post('/documents/sync', { source }),
+  rebuild: (source = 'all') => api.post('/documents/rebuild', { source }),
+  cleanOrphans: (source = 'all') => api.post('/documents/clean-orphans', { source }),
+  crawl: (url) => api.post('/documents/crawl', { url })
+}
 
 // 搜索
-export const search = (query) => api.post('/search', { query })
-
-// 配置
-export const getConfig = () => api.get('/config')
-export const saveConfig = (data) => api.put('/config', data)
+export const searchApi = {
+  search: (query) => api.post('/search', { query })
+}
 
 // 服务管理
-export const getServices = () => api.get('/services')
-export const startService = (key) => api.post(`/services/${key}/start`)
-export const stopService = (key) => api.post(`/services/${key}/stop`)
+export const servicesApi = {
+  start: (service) => api.post('/services/start', { service }),
+  stop: (service) => api.post('/services/stop', { service })
+}
 
-// 健康检查
-export const getHealth = () => api.get('/health')
+export function createWebSocket(onMessage) {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsUrl = `${protocol}//${window.location.host}/ws`
+  
+  const ws = new WebSocket(wsUrl)
+  
+  ws.onopen = () => {
+    console.log('WebSocket connected')
+  }
+  
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (onMessage) {
+        onMessage(data)
+      }
+    } catch (e) {
+      console.error('WebSocket message parse error:', e)
+    }
+  }
+  
+  ws.onclose = () => {
+    console.log('WebSocket disconnected')
+    setTimeout(() => {
+      console.log('WebSocket reconnecting...')
+      createWebSocket(onMessage)
+    }, 3000)
+  }
+  
+  ws.onerror = (error) => {
+    console.error('WebSocket error:', error)
+  }
+  
+  return ws
+}
 
 export default api

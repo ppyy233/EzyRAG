@@ -56,4 +56,5 @@ tests/*.json
 .DS_Store
 Thumbs.db
 
-frontend
+frontend/node_modules
+frontend/dist

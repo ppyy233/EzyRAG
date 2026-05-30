@@ -106,7 +106,7 @@ def create_minimal_config():
             f.write("EMBEDDING_LOCAL_DIM=\n\n")
             f.write("# ----- Rerank 配置 -----\n")
             f.write("RERANK_ENABLED=true\n")
-            f.write("RERANK_MODE=local\n\n")
+            f.write("RERANK_MODE=cloud\n\n")
             f.write("# 云端配置\n")
             f.write("RERANK_CLOUD_URL=https://api.siliconflow.cn/v1/rerank\n")
             f.write("RERANK_CLOUD_API_KEY=\n")

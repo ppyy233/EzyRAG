@@ -196,7 +196,7 @@ class RerankAPI:
 
     def __init__(self):
         self._enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
-        self._mode = os.getenv("RERANK_MODE", "local").lower()
+        self._mode = os.getenv("RERANK_MODE", "cloud").lower()
 
         # 读取 URL 和认证信息（本地和云端的区别只是地址和 key）
         if self._mode == "cloud":

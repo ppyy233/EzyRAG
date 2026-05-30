@@ -107,3 +107,27 @@ def load_all_documents(*dirs: Path) -> List[dict]:
                     logger.warning(f"加载失败: {f.name}: {e}")
     logger.info(f"共加载 {len(documents)} 份文档")
     return documents
+
+
+def get_document_paths(*dirs: Path) -> List[str]:
+    """获取文档路径列表（不读取内容）
+    
+    Args:
+        *dirs: 一个或多个目录路径
+        
+    Returns:
+        文档路径列表
+    """
+    paths = []
+    seen = set()
+    for docs_dir in dirs:
+        if not docs_dir.exists():
+            continue
+        for ext in SUPPORTED_EXT:
+            for f in docs_dir.glob(f"**/*{ext}"):
+                if f.is_file():
+                    key = str(f.resolve())
+                    if key not in seen:
+                        seen.add(key)
+                        paths.append(str(f))
+    return sorted(paths)

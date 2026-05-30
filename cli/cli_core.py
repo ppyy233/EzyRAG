@@ -104,14 +104,8 @@ def connect_chroma():
         collection = client.get_collection(name=collection_name)
         collection.count()  # 验证完整性
     except Exception:
-        from config.settings import get_hnsw_config
-        hnsw_config = get_hnsw_config()
-        metadata = {
-            "hnsw:space": hnsw_config["space"],
-            "hnsw:sync_threshold": hnsw_config["sync_threshold"],
-            "hnsw:ef_construction": hnsw_config["ef_construction"],
-            "hnsw:max_neighbors": hnsw_config["max_neighbors"],
-        }
+        from config.settings import get_chroma_hnsw_metadata
+        metadata = get_chroma_hnsw_metadata()
         collection = client.get_or_create_collection(
             name=collection_name,
             metadata=metadata

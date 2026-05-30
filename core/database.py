@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 from config.pointer import (
     read_pointer, write_pointer, get_active_collection, set_active_collection,
 )
-from config.settings import get_hnsw_config
+from config.settings import get_chroma_hnsw_metadata
 from core.maintenance import _get_hnsw_segment_id, validate_hnsw
 from core.chunking import chunk_single_document
 from core.utils import content_hash
@@ -180,94 +180,86 @@ class DocumentDatabase:
 
     def update(self, doc: dict, chunk_cfg: dict, source_type: str = "local_file") -> int:
         """
-        更新文档 — 影子集合策略
-        创建影子 → 复制全部 → 删旧+写新 → 验证 → 切指针 → 删旧集合
+        更新单个文档 — 直接操作
+        直接删除旧文档，添加新文档
         """
         source = doc["path"]
-        shadow_name = None
-        try:
-            shadow_name, shadow = self._create_shadow_collection()
-            self._copy_to_shadow(shadow)
+        
+        # 直接删除旧文档
+        self.delete(source)
+        
+        # 直接添加新文档
+        chunks = chunk_single_document(doc, chunk_cfg, source_type)
+        if chunks:
+            self._add_to_collection(self.collection, chunks)
+        
+        logger.info(f"更新成功: {source}")
+        return len(chunks)
 
-            shadow.delete(where={"source": source})
-            chunks = chunk_single_document(doc, chunk_cfg, source_type)
-            if chunks:
-                self._add_to_collection(shadow, chunks)
-
-            self._validate_shadow(shadow)
-            self._switch_to_shadow(shadow_name)
-            self.collection = shadow
-            self.collection_name = shadow_name
-            self._cleanup_old_collections()
-
-            logger.info(f"更新成功: {source} -> {shadow_name}")
-            return len(chunks)
-
-        except Exception as e:
-            logger.error(f"更新失败: {source}: {e}")
-            self._cleanup_failed_shadow(shadow_name)
-            raise
-
-    def sync(self, documents: List[dict], chunk_cfg: dict, source_type: str = "local_file", on_progress=None) -> dict:
+    def sync(self, documents: List[dict], chunk_cfg: dict, source_type: str = "local_file", on_progress=None, stored_sources: set = None) -> dict:
         """
-        同步文档 — 影子集合策略
+        同步文档 — 延迟加载（直接操作）
         对比 hash，自动增删改
+        
+        设计说明：
+        - 直接在现有集合上操作，不使用影子集合
+        - 每个 add/delete 操作都是原子的
+        - 如果中途停止，可以重新运行 sync 修复（最终一致性）
+        - 使用延迟加载：只读取变化的文件内容
+        
         on_progress(op, idx, total, name, count) — 进度回调
+        stored_sources: 已查询的源集合（避免重复查询）
         """
         stats = {"added": 0, "updated": 0, "unchanged": 0, "deleted": 0}
-        shadow_name = None
-        try:
-            shadow_name, shadow = self._create_shadow_collection()
-            self._copy_to_shadow(shadow, on_progress=on_progress)
-
-            current_sources = {d["path"] for d in documents}
+        
+        current_sources = {d["path"] for d in documents}
+        # 如果外部已经查询过，直接使用；否则查询一次
+        if stored_sources is None:
             stored_sources = self.list_sources()
-
-            n = len(documents)
-            for idx, doc in enumerate(documents, 1):
-                source = doc["path"]
-                fname = Path(source).name
-                if not self.exists(source):
-                    chunks = chunk_single_document(doc, chunk_cfg, source_type)
-                    if chunks:
-                        self._add_to_collection(shadow, chunks)
-                        stats["added"] += len(chunks)
-                        if on_progress:
-                            on_progress("add", idx, n, fname, len(chunks))
+        
+        # 计算差异
+        new_sources = current_sources - stored_sources      # 需要添加
+        delete_sources = stored_sources - current_sources   # 需要删除
+        common_sources = current_sources & stored_sources   # 需要检查更新
+        
+        n = len(documents)
+        
+        # 1. 处理新增文档
+        for idx, doc in enumerate(documents, 1):
+            if doc["path"] in new_sources:
+                fname = Path(doc["path"]).name
+                chunks = chunk_single_document(doc, chunk_cfg, source_type)
+                if chunks:
+                    self._add_to_collection(self.collection, chunks)
+                    stats["added"] += len(chunks)
+                    if on_progress:
+                        on_progress("add", idx, n, fname, len(chunks))
+        
+        # 2. 处理更新文档（对比 hash，延迟加载）
+        for idx, doc in enumerate(documents, 1):
+            if doc["path"] in common_sources:
+                fname = Path(doc["path"]).name
+                stored_h = self.get_hash(doc["path"])
+                # 使用延迟加载：doc["text"] 已经在调用前读取
+                current_h = content_hash(doc["text"])
+                if stored_h != current_h:
+                    # 直接更新
+                    self.update(doc, chunk_cfg, source_type)
+                    stats["updated"] += 1
+                    if on_progress:
+                        on_progress("update", idx, n, fname, 0)
                 else:
-                    stored_h = self.get_hash(source)
-                    current_h = content_hash(doc["text"])
-                    if stored_h and stored_h != current_h:
-                        shadow.delete(where={"source": source})
-                        chunks = chunk_single_document(doc, chunk_cfg, source_type)
-                        if chunks:
-                            self._add_to_collection(shadow, chunks)
-                            stats["updated"] += len(chunks)
-                            if on_progress:
-                                on_progress("update", idx, n, fname, len(chunks))
-                    else:
-                        stats["unchanged"] += 1
-
-            deleted_sources = stored_sources - current_sources
-            for source in deleted_sources:
-                shadow.delete(where={"source": source})
-                stats["deleted"] += 1
-                if on_progress:
-                    on_progress("delete", 0, 0, Path(source).name, 0)
-
-            self._validate_shadow(shadow)
-            self._switch_to_shadow(shadow_name)
-            self.collection = shadow
-            self.collection_name = shadow_name
-            self._cleanup_old_collections()
-
-            logger.info(f"同步完成: {shadow_name}")
-            return stats
-
-        except Exception as e:
-            logger.error(f"同步失败: {e}")
-            self._cleanup_failed_shadow(shadow_name)
-            raise
+                    stats["unchanged"] += 1
+        
+        # 3. 处理删除文档
+        for source in delete_sources:
+            self.delete(source)
+            stats["deleted"] += 1
+            if on_progress:
+                on_progress("delete", 0, 0, Path(source).name, 0)
+        
+        logger.info(f"同步完成: 新增 {stats['added']}, 更新 {stats['updated']}, 删除 {stats['deleted']}, 未变 {stats['unchanged']}")
+        return stats
 
     def rebuild(self, documents: List[dict], chunk_cfg: dict, source_type: str = "local_file", on_progress=None) -> int:
         """
@@ -327,14 +319,8 @@ class DocumentDatabase:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         shadow_name = f"{base_name}_v{timestamp}"
 
-        # 从配置获取 HNSW 参数
-        hnsw_config = get_hnsw_config()
-        metadata = {
-            "hnsw:space": hnsw_config["space"],
-            "hnsw:sync_threshold": hnsw_config["sync_threshold"],
-            "hnsw:ef_construction": hnsw_config["ef_construction"],
-            "hnsw:max_neighbors": hnsw_config["max_neighbors"],
-        }
+        # 从配置获取 ChromaDB 支持的 HNSW 参数
+        metadata = get_chroma_hnsw_metadata()
 
         shadow = self.chroma_client.get_or_create_collection(
             name=shadow_name,

@@ -334,7 +334,7 @@ wheels = [
 
 [[package]]
 name = "ezy-rag"
-version = "0.0.18"
+version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -347,10 +347,14 @@ dependencies = [
     { name = "pypdf" },
     { name = "python-docx" },
     { name = "requests" },
-    { name = "sentence-transformers" },
     { name = "tokenizers" },
-    { name = "torch" },
     { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+local = [
+    { name = "sentence-transformers" },
+    { name = "torch" },
 ]
 
 [package.metadata]
@@ -365,11 +369,12 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6.11.0" },
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "requests", specifier = ">=2.28.0" },
-    { name = "sentence-transformers", specifier = ">=5.5.0" },
+    { name = "sentence-transformers", marker = "extra == 'local'", specifier = ">=5.5.0" },
     { name = "tokenizers", specifier = "==0.22.1" },
-    { name = "torch", specifier = ">=2.5.0,<2.7.0", index = "https://download.pytorch.org/whl/cu124" },
+    { name = "torch", marker = "extra == 'local'", specifier = ">=2.5.0,<2.7.0", index = "https://download.pytorch.org/whl/cu124" },
     { name = "uvicorn", specifier = ">=0.46.0" },
 ]
+provides-extras = ["local"]
 
 [[package]]
 name = "fastapi"
