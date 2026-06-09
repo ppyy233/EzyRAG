@@ -18,6 +18,9 @@
         <el-icon><Refresh /></el-icon>
         刷新状态
       </el-button>
+      <el-button type="danger" @click="shutdownWeb" plain>
+        停止 Web 服务
+      </el-button>
     </div>
 
     <el-table :data="services" stripe>
@@ -195,6 +198,19 @@ const stopAll = async () => {
     if (error !== 'cancel') ElMessage.error(`停止失败: ${error.message}`)
   } finally {
     batchLoading.value = false
+  }
+}
+
+const shutdownWeb = async () => {
+  try {
+    await ElMessageBox.confirm('确定要停止 Web 服务吗？停止后将无法访问此页面。', '确认停止 Web 服务', { type: 'warning' })
+    await servicesApi.shutdown()
+    ElMessage.success('Web 服务即将关闭')
+    setTimeout(() => {
+      window.location.href = '/'
+    }, 2000)
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error('停止 Web 服务失败')
   }
 }
 

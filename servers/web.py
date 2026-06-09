@@ -1439,6 +1439,16 @@ async def stop_service(request: ServiceAction):
     except Exception as e:
         return ApiResponse(status="error", message=str(e))
 
+@app.post("/api/services/shutdown")
+async def shutdown_web():
+    """关闭 Web 服务自身"""
+    import asyncio
+    async def delay_shutdown():
+        await asyncio.sleep(1)
+        os._exit(0)
+    asyncio.create_task(delay_shutdown())
+    return ApiResponse(status="success", message="Web 服务即将关闭")
+
 # ============================================================
 #  WebSocket
 # ============================================================

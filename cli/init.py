@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from cli.ui import header, info_card, menu, confirm, log_ok, log_error, log_info, log_step
 from cli.cli_core import reload_env
+from config.version import VERSION_DISPLAY
 
 CONFIG_DIR = ROOT / "config"
 ENV_FILE = CONFIG_DIR / ".env"
@@ -36,7 +37,7 @@ def save_env(env: dict):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(ENV_FILE, 'w', encoding='utf-8') as f:
         f.write("# ============================================================\n")
-        f.write("# Ezy-RAG — 环境配置\n")
+        f.write(f"# Ezy-RAG {VERSION_DISPLAY} — 环境配置\n")
         f.write("# ============================================================\n\n")
         
         f.write("# ----- Embedding 配置 -----\n")
@@ -61,7 +62,7 @@ def save_env(env: dict):
         f.write("\n")
         
         f.write("# ----- 服务配置 -----\n")
-        for key in ['CHROMA_SERVER_HOST', 'CHROMA_SERVER_PORT', 'MCP_SERVER_HOST', 'MCP_SERVER_PORT']:
+        for key in ['CHROMA_SERVER_HOST', 'CHROMA_SERVER_PORT', 'MCP_SERVER_HOST', 'MCP_SERVER_PORT', 'WEB_API_HOST', 'WEB_API_PORT']:
             f.write(f"{key}={env.get(key, '')}\n")
         f.write("\n")
         
@@ -116,6 +117,7 @@ def show_config():
     info_card("服务配置", {
         "ChromaDB": f"{env.get('CHROMA_SERVER_HOST', '127.0.0.1')}:{env.get('CHROMA_SERVER_PORT', '9898')}",
         "MCP": f"{env.get('MCP_SERVER_HOST', '127.0.0.1')}:{env.get('MCP_SERVER_PORT', '9766')}",
+        "Web": f"{env.get('WEB_API_HOST', '127.0.0.1')}:{env.get('WEB_API_PORT', '9767')}",
     })
     
     # 切块策略
@@ -259,6 +261,41 @@ def modify_chunk():
         log_error("无效的选择")
 
 
+def modify_services():
+    """修改服务端口配置"""
+    env = load_env()
+    
+    log_step("修改服务端口")
+    print(f"  当前配置:")
+    print(f"  1. ChromaDB: {env.get('CHROMA_SERVER_HOST', '127.0.0.1')}:{env.get('CHROMA_SERVER_PORT', '9898')}")
+    print(f"  2. MCP:      {env.get('MCP_SERVER_HOST', '127.0.0.1')}:{env.get('MCP_SERVER_PORT', '9766')}")
+    print(f"  3. Web:      {env.get('WEB_API_HOST', '127.0.0.1')}:{env.get('WEB_API_PORT', '9767')}")
+    print()
+    
+    choice = input("  选择要修改的服务 (1-3, 直接回车跳过): ").strip()
+    
+    if choice == '1':
+        host = input(f"  Host [{env.get('CHROMA_SERVER_HOST', '127.0.0.1')}]: ").strip()
+        if host: env['CHROMA_SERVER_HOST'] = host
+        port = input(f"  Port [{env.get('CHROMA_SERVER_PORT', '9898')}]: ").strip()
+        if port: env['CHROMA_SERVER_PORT'] = port
+    elif choice == '2':
+        host = input(f"  Host [{env.get('MCP_SERVER_HOST', '127.0.0.1')}]: ").strip()
+        if host: env['MCP_SERVER_HOST'] = host
+        port = input(f"  Port [{env.get('MCP_SERVER_PORT', '9766')}]: ").strip()
+        if port: env['MCP_SERVER_PORT'] = port
+    elif choice == '3':
+        host = input(f"  Host [{env.get('WEB_API_HOST', '127.0.0.1')}]: ").strip()
+        if host: env['WEB_API_HOST'] = host
+        port = input(f"  Port [{env.get('WEB_API_PORT', '9767')}]: ").strip()
+        if port: env['WEB_API_PORT'] = port
+    else:
+        return
+    
+    save_env(env)
+    log_ok("服务配置已保存")
+
+
 def reset_config():
     """重置配置为默认值"""
     if not confirm("确定要重置配置为默认值？当前配置将被覆盖", default=False):
@@ -284,6 +321,7 @@ def main():
         choice = menu("操作", [
             "修改 Embedding 配置",
             "修改 Rerank 配置",
+            "修改服务端口",
             "修改切块策略",
             "重置配置",
             "返回"
@@ -294,13 +332,15 @@ def main():
         elif choice == 2:
             modify_rerank()
         elif choice == 3:
-            modify_chunk()
+            modify_services()
         elif choice == 4:
-            reset_config()
+            modify_chunk()
         elif choice == 5:
+            reset_config()
+        elif choice == 6:
             break
         
-        if choice != 5:
+        if choice != 6:
             from cli.ui import pause
             pause()
 

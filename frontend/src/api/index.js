@@ -72,7 +72,8 @@ export const searchApi = {
 // 服务管理
 export const servicesApi = {
   start: (service) => api.post('/services/start', { service }),
-  stop: (service) => api.post('/services/stop', { service })
+  stop: (service) => api.post('/services/stop', { service }),
+  shutdown: () => api.post('/services/shutdown')
 }
 
 export function createWebSocket(onMessage) {

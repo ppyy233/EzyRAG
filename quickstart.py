@@ -354,6 +354,28 @@ def step_interactive_config() -> bool:
     env['CHROMA_SERVER_HOST'] = '127.0.0.1'
     env['CHROMA_SERVER_PORT'] = str(chroma_port)
 
+    # --- MCP ---
+    print()
+    print_info("▸ MCP 服务")
+    print_info("─" * 40)
+
+    mcp_port_str = input_with_default("MCP 端口", "9766")
+    if not mcp_port_str.isdigit() or not (1024 <= int(mcp_port_str) <= 65535):
+        print_error("无效端口，使用默认值 9766")
+        mcp_port_str = "9766"
+    success, mcp_port = handle_port_conflict(int(mcp_port_str), "MCP")
+    if not success:
+        print_warn("跳过 MCP 端口配置")
+        mcp_port = 9766
+
+    env['MCP_SERVER_HOST'] = '127.0.0.1'
+    env['MCP_SERVER_PORT'] = str(mcp_port)
+
+    # --- Web ---
+    print()
+    print_info("▸ Web API 服务")
+    print_info("─" * 40)
+
     web_port_str = input_with_default("Web API 端口", "9767")
     if not web_port_str.isdigit() or not (1024 <= int(web_port_str) <= 65535):
         print_error("无效端口，使用默认值 9767")
@@ -363,8 +385,8 @@ def step_interactive_config() -> bool:
         print_warn("跳过 Web API 端口配置")
         web_port = 9767
 
-    env['MCP_SERVER_HOST'] = '127.0.0.1'
-    env['MCP_SERVER_PORT'] = '9766'
+    env['WEB_API_HOST'] = '127.0.0.1'
+    env['WEB_API_PORT'] = str(web_port)
 
     # --- Embedding ---
     print()
@@ -442,7 +464,8 @@ def step_interactive_config() -> bool:
     print_info(f"  Embedding: cloud, {env['EMBEDDING_CLOUD_MODEL']}")
     print_info(f"  Rerank:    {rerank_status}")
     print_info(f"  ChromaDB:  {env['CHROMA_SERVER_HOST']}:{env['CHROMA_SERVER_PORT']}")
-    print_info(f"  Web API:   127.0.0.1:{web_port}")
+    print_info(f"  MCP:       {env['MCP_SERVER_HOST']}:{env['MCP_SERVER_PORT']}")
+    print_info(f"  Web API:   {env['WEB_API_HOST']}:{env['WEB_API_PORT']}")
     print_info(f"  切块模板:  {env['CHUNK_TEMPLATE']}")
 
     confirm = input("\n  确认写入配置文件? [Y/n]: ").strip().lower()
@@ -486,7 +509,9 @@ def step_interactive_config() -> bool:
         f.write(f"CHROMA_SERVER_HOST={env.get('CHROMA_SERVER_HOST', '127.0.0.1')}\n")
         f.write(f"CHROMA_SERVER_PORT={env.get('CHROMA_SERVER_PORT', '9898')}\n")
         f.write(f"MCP_SERVER_HOST={env.get('MCP_SERVER_HOST', '127.0.0.1')}\n")
-        f.write(f"MCP_SERVER_PORT={env.get('MCP_SERVER_PORT', '9766')}\n\n")
+        f.write(f"MCP_SERVER_PORT={env.get('MCP_SERVER_PORT', '9766')}\n")
+        f.write(f"WEB_API_HOST={env.get('WEB_API_HOST', '127.0.0.1')}\n")
+        f.write(f"WEB_API_PORT={env.get('WEB_API_PORT', '9767')}\n\n")
 
         f.write("# ----- 切块策略 -----\n")
         f.write(f"CHUNK_TEMPLATE={env.get('CHUNK_TEMPLATE', 'academic')}\n")
@@ -574,9 +599,10 @@ def step_start_services():
     print_step("4", "启动服务")
 
     chroma_port = read_port_from_env('CHROMA_SERVER_PORT', 9898)
+    web_port = read_port_from_env('WEB_API_PORT', 9767)
 
     chroma_process = start_service("servers.chroma", chroma_port, "ChromaDB")
-    web_process = start_service("servers.web", 9767, "Web API")
+    web_process = start_service("servers.web", web_port, "Web API")
 
     return chroma_process, web_process
 
@@ -588,7 +614,8 @@ def step_start_services():
 def step_open_browser():
     print_step("5", "打开浏览器")
 
-    url = "http://127.0.0.1:9767"
+    web_port = read_port_from_env('WEB_API_PORT', 9767)
+    url = f"http://127.0.0.1:{web_port}"
     print_info(f"访问地址: {url}")
 
     try:

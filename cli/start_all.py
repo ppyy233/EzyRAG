@@ -19,7 +19,8 @@ SERVICE_MODULES = {
     "chromadb": "servers.chroma",
     "embedding": "servers.embedding",
     "rerank": "servers.rerank",
-    "mcp": "servers.mcp"
+    "mcp": "servers.mcp",
+    "web": "servers.web"
 }
 
 
@@ -27,6 +28,7 @@ def get_services_display() -> list:
     """获取服务状态显示数据"""
     status = get_service_status()
     return [
+        {"name": "Web", "online": status["web"]["online"], "info": status["web"]["info"]},
         {"name": "ChromaDB", "online": status["chromadb"]["online"], "info": status["chromadb"]["info"]},
         {"name": "Embedding", "online": status["embedding"]["online"], "info": status["embedding"]["info"]},
         {"name": "Rerank", "online": status["rerank"]["online"], "info": status["rerank"]["info"], "skip": status["rerank"].get("skip", False)},
@@ -105,6 +107,10 @@ def start_all():
     """启动所有服务"""
     status = get_service_status()
     
+    # 启动 Web（最先启动，其他服务依赖它）
+    if not status["web"]["online"]:
+        start_service("web")
+    
     # 启动 ChromaDB
     if not status["chromadb"]["online"]:
         start_service("chromadb")
@@ -137,6 +143,29 @@ def stop_all():
     
     if status["mcp"]["online"]:
         stop_service_by_port("MCP", status["mcp"]["port"])
+    
+    # 停止 Web（最后停止）
+    if status["web"]["online"]:
+        stop_web()
+
+
+def stop_web():
+    """通过 API 关闭 Web 服务"""
+    import httpx
+    web_host = os.getenv("WEB_API_HOST", "127.0.0.1")
+    web_port = int(os.getenv("WEB_API_PORT", "9767"))
+    try:
+        with httpx.Client(timeout=5) as client:
+            r = client.post(f"http://{web_host}:{web_port}/api/services/shutdown")
+            if r.status_code == 200:
+                log_ok("Web 服务即将关闭")
+                return True
+            else:
+                log_error(f"关闭失败: {r.status_code}")
+                return False
+    except Exception as e:
+        log_error(f"关闭失败: {e}")
+        return False
 
 
 def main():

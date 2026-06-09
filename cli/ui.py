@@ -80,27 +80,27 @@ def table(headers: list, rows: list, max_width: int = 80):
 
 def log_ok(message: str):
     """成功日志"""
-    print(f"  ✓ {message}")
+    print(f"  [OK] {message}")
 
 
 def log_error(message: str):
     """错误日志"""
-    print(f"  ✗ {message}")
+    print(f"  [!!] {message}")
 
 
 def log_warn(message: str):
     """警告日志"""
-    print(f"  ⚡ {message}")
+    print(f"  [!] {message}")
 
 
 def log_info(message: str):
     """信息日志"""
-    print(f"  ℹ {message}")
+    print(f"  [i] {message}")
 
 
 def log_step(message: str):
     """步骤日志"""
-    print(f"\n  ➤ {message}")
+    print(f"\n  >> {message}")
 
 
 def confirm(message: str, default: bool = False) -> bool:

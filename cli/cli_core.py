@@ -35,12 +35,17 @@ def get_service_status() -> dict:
     chroma_port = int(os.getenv("CHROMA_SERVER_PORT", "9898"))
     mcp_host = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
     mcp_port = int(os.getenv("MCP_SERVER_PORT", "9766"))
+    web_host = os.getenv("WEB_API_HOST", "127.0.0.1")
+    web_port = int(os.getenv("WEB_API_PORT", "9767"))
     
     # ChromaDB 状态
     chroma_online = check_port(chroma_host, chroma_port)
     
     # MCP 状态
     mcp_online = check_port(mcp_host, mcp_port)
+    
+    # Web 状态
+    web_online = check_port(web_host, web_port)
     
     # Embedding 状态
     try:
@@ -80,6 +85,7 @@ def get_service_status() -> dict:
         "embedding": embedding,
         "rerank": rerank,
         "mcp": {"online": mcp_online, "host": mcp_host, "port": mcp_port, "info": f":{mcp_port}"},
+        "web": {"online": web_online, "host": web_host, "port": web_port, "info": f":{web_port}"},
     }
 
 
