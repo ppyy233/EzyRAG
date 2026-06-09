@@ -132,8 +132,10 @@ class EmbeddingAPI:
     def _embed_openai(self, texts: list[str]) -> list[list[float]]:
         """OpenAI 兼容格式"""
         kwargs = {"model": self._model, "input": texts}
-        if self._dim is not None:
-            kwargs["dimensions"] = self._dim
+        # 只有用户显式配置了维度才传 dimensions（SiliconFlow 不支持自动检测的维度）
+        explicit_dim = os.getenv("EMBEDDING_CLOUD_DIM", "").strip()
+        if explicit_dim:
+            kwargs["dimensions"] = int(explicit_dim)
         resp = self._client.embeddings.create(**kwargs)
         vectors = [item.embedding for item in resp.data]
         # 自动检测维度
