@@ -121,8 +121,13 @@ def show_config():
     })
     
     # 切块策略
+    from config.settings import get_chunk_config
+    chunk_cfg = get_chunk_config()
     info_card("切块策略", {
         "模板": env.get('CHUNK_TEMPLATE', 'academic'),
+        "策略": chunk_cfg.get('strategy', '-'),
+        "chunk_size": str(chunk_cfg.get('chunk_size', '-')),
+        "overlap": str(chunk_cfg.get('overlap', '-')),
     })
 
 
@@ -233,32 +238,113 @@ def modify_rerank():
 
 def modify_chunk():
     """修改切块策略"""
-    from config.settings import get_chunk_templates
+    from config.settings import get_chunk_templates, save_config, load_config
     
     env = load_env()
     templates = get_chunk_templates()
     
     log_step("修改切块策略")
-    print(f"  当前模板: {env.get('CHUNK_TEMPLATE', 'academic')}")
+    current = env.get('CHUNK_TEMPLATE', 'academic')
+    print(f"  当前模板: {current}")
     print()
     
     template_list = list(templates.keys())
     for i, name in enumerate(template_list, 1):
         t = templates[name]
-        print(f"  {i}. {name} - {t['name']} (chunk_size={t['chunk_size']}, overlap={t['overlap']})")
+        strategy = t.get('strategy', 'flat')
+        separators_count = len(t.get('separators', []))
+        print(f"  {i}. {name} - {t['name']}")
+        print(f"     chunk_size={t['chunk_size']}, overlap={t['overlap']}, strategy={strategy}, separators={separators_count}个")
     
-    choice = input(f"\n  选择模板 (1-{len(template_list)}, 直接回车跳过): ").strip()
+    print(f"\n  {len(template_list) + 1}. 自定义参数（修改当前模板的参数）")
+    
+    choice = input(f"\n  选择 (1-{len(template_list) + 1}, 直接回车跳过): ").strip()
     
     if choice and choice.isdigit():
         idx = int(choice) - 1
         if 0 <= idx < len(template_list):
+            # 切换到预设模板
             env['CHUNK_TEMPLATE'] = template_list[idx]
             save_env(env)
+            # 同步更新 config.json 的 default_template
+            config = load_config()
+            config["chunk"]["default_template"] = template_list[idx]
+            save_config(config)
             log_ok(f"切块模板已设置为: {template_list[idx]}")
+        elif idx == len(template_list):
+            # 自定义参数
+            _customize_chunk_params(env, templates)
         else:
             log_error("无效的选择")
     elif choice:
         log_error("无效的选择")
+
+
+def _customize_chunk_params(env: dict, templates: dict):
+    """自定义切块参数"""
+    from config.settings import save_config, load_config
+    
+    current = env.get('CHUNK_TEMPLATE', 'academic')
+    current_template = templates.get(current, {})
+    
+    print(f"\n  当前模板: {current}")
+    print(f"  当前参数: chunk_size={current_template.get('chunk_size', '-')}, overlap={current_template.get('overlap', '-')}, strategy={current_template.get('strategy', '-')}")
+    print()
+    
+    # chunk_size
+    chunk_size_str = input(f"  chunk_size [{current_template.get('chunk_size', 1000)}]: ").strip()
+    if chunk_size_str and chunk_size_str.isdigit():
+        chunk_size = int(chunk_size_str)
+    else:
+        chunk_size = current_template.get('chunk_size', 1000)
+    
+    # overlap
+    overlap_str = input(f"  overlap [{current_template.get('overlap', 100)}]: ").strip()
+    if overlap_str and overlap_str.isdigit():
+        overlap = int(overlap_str)
+    else:
+        overlap = current_template.get('overlap', 100)
+    
+    # strategy
+    print(f"\n  可用策略:")
+    print(f"    1. recursive - 递归切分（适合文档）")
+    print(f"    2. flat - 扁平切分（适合代码）")
+    print(f"    3. sentence - 句子级切分（适合FAQ）")
+    print(f"    4. markdown_header - Markdown标题切分")
+    
+    strategy_map = {'1': 'recursive', '2': 'flat', '3': 'sentence', '4': 'markdown_header'}
+    current_strategy = current_template.get('strategy', 'recursive')
+    strategy_choice = input(f"  strategy [{current_strategy}]: ").strip()
+    
+    if strategy_choice in strategy_map:
+        strategy = strategy_map[strategy_choice]
+    elif strategy_choice in strategy_map.values():
+        strategy = strategy_choice
+    else:
+        strategy = current_strategy
+    
+    # 确认
+    print(f"\n  新参数: chunk_size={chunk_size}, overlap={overlap}, strategy={strategy}")
+    confirm_choice = input("  确认保存? (Y/n): ").strip().lower()
+    
+    if confirm_choice != 'n':
+        # 更新 config.json 中的 custom 模板
+        config = load_config()
+        config["chunk"]["templates"]["custom"] = {
+            "name": "自定义模板",
+            "chunk_size": chunk_size,
+            "overlap": overlap,
+            "strategy": strategy,
+            "separators": ["\n\n", "\n", " ", ""]
+        }
+        config["chunk"]["default_template"] = "custom"
+        save_config(config)
+        
+        # 更新 .env
+        env['CHUNK_TEMPLATE'] = 'custom'
+        save_env(env)
+        
+        log_ok("自定义切块参数已保存")
 
 
 def modify_services():

@@ -474,7 +474,14 @@ async def get_chunk_config_api():
 
 @app.put("/api/config/chunk")
 async def update_chunk_config(request: dict):
-    """更新切片配置"""
+    """更新切片配置
+    
+    支持两种模式：
+    1. 切换预设模板: { template: "academic" }
+    2. 自定义参数: { chunk_size, overlap, strategy, template_name?, separators? }
+       - 如果 template_name 为 "custom" 或未指定，则更新 custom 模板
+       - 如果 template_name 为预设模板名，则复制该模板并覆盖参数
+    """
     try:
         import json
         
@@ -482,38 +489,96 @@ async def update_chunk_config(request: dict):
         overlap = request.get("overlap")
         strategy = request.get("strategy")
         template = request.get("template")
+        template_name = request.get("template_name")
+        separators = request.get("separators")
         
         # 更新 config.json
         config_path = ROOT / "config" / "config.json"
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
         
-        if template:
-            # 切换模板
+        active_template = None
+        
+        if template and chunk_size is None:
+            # 模式1: 纯切换模板（不修改参数）
             if template in config["chunk"]["templates"]:
                 config["chunk"]["default_template"] = template
+                active_template = template
             else:
                 return ApiResponse(status="error", message=f"模板 {template} 不存在")
         elif chunk_size is not None and overlap is not None and strategy is not None:
-            # 更新自定义模板
-            config["chunk"]["templates"]["custom"] = {
-                "name": "自定义模板",
+            # 模式2: 自定义参数
+            # 确定目标模板名
+            target = template_name or "custom"
+            
+            # 获取基础模板的 separators（如果目标是预设模板，保留其 separators）
+            if target in config["chunk"]["templates"] and target != "custom":
+                base_separators = config["chunk"]["templates"][target].get("separators", ["\n\n", "\n", " ", ""])
+            else:
+                base_separators = config["chunk"]["templates"].get("custom", {}).get("separators", ["\n\n", "\n", " ", ""])
+            
+            # 使用用户提供的 separators 或保留基础模板的
+            final_separators = separators if separators is not None else base_separators
+            
+            # 更新目标模板
+            config["chunk"]["templates"][target] = {
+                "name": config["chunk"]["templates"].get(target, {}).get("name", f"{target}模板"),
                 "chunk_size": int(chunk_size),
                 "overlap": int(overlap),
                 "strategy": strategy,
-                "separators": ["\n\n", "\n", " ", ""]
+                "separators": final_separators
             }
-            config["chunk"]["default_template"] = "custom"
+            config["chunk"]["default_template"] = target
+            active_template = target
+        elif template:
+            # 同时提供了 template 和部分参数，切换模板
+            if template in config["chunk"]["templates"]:
+                config["chunk"]["default_template"] = template
+                active_template = template
+            else:
+                return ApiResponse(status="error", message=f"模板 {template} 不存在")
         
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"切片配置已更新: chunk_size={chunk_size}, overlap={overlap}, strategy={strategy}, template={template}")
+        # 同步更新 .env 中的 CHUNK_TEMPLATE（确保 get_chunk_config() 生效）
+        if active_template:
+            _update_env_chunk_template(active_template)
+        
+        logger.info(f"切片配置已更新: template={active_template}, chunk_size={chunk_size}, overlap={overlap}, strategy={strategy}")
         
         return ApiResponse(status="success", message="切片配置已保存")
     except Exception as e:
         logger.error(f"更新切片配置失败: {e}")
         return ApiResponse(status="error", message=str(e))
+
+
+def _update_env_chunk_template(template_name: str):
+    """更新 .env 文件中的 CHUNK_TEMPLATE"""
+    env_path = ROOT / "config" / ".env"
+    if not env_path.exists():
+        return
+    
+    lines = []
+    found = False
+    with open(env_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            stripped = line.strip()
+            if stripped.startswith('CHUNK_TEMPLATE='):
+                lines.append(f"CHUNK_TEMPLATE={template_name}\n")
+                found = True
+            else:
+                lines.append(line)
+    
+    if not found:
+        lines.append(f"\n# ----- 切块策略 -----\n")
+        lines.append(f"CHUNK_TEMPLATE={template_name}\n")
+    
+    with open(env_path, 'w', encoding='utf-8') as f:
+        f.writelines(lines)
+    
+    # 热重载环境变量
+    load_dotenv(env_path, override=True)
 
 # ============================================================
 #  API 端点：文档管理

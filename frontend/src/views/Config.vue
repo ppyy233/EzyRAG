@@ -180,8 +180,10 @@
                 <el-select v-model="chunkConfig.strategy" style="width: 200px;">
                   <el-option label="递归切分 (recursive)" value="recursive" />
                   <el-option label="扁平切分 (flat)" value="flat" />
+                  <el-option label="句子级切分 (sentence)" value="sentence" />
+                  <el-option label="Markdown标题 (markdown_header)" value="markdown_header" />
                 </el-select>
-                <span class="form-hint">递归适合文档，扁平适合代码</span>
+                <span class="form-hint">递归适合文档，扁平适合代码，句子适合FAQ，Markdown适合结构化文档</span>
               </el-form-item>
             </el-form>
           </el-card>
@@ -377,11 +379,29 @@ const saveConfig = async () => {
 const saveChunkConfig = async () => {
   savingChunk.value = true
   try {
-    await configApi.updateChunk({
-      chunk_size: chunkConfig.value.chunk_size,
-      overlap: chunkConfig.value.overlap,
-      strategy: chunkConfig.value.strategy
-    })
+    // 判断是切换预设模板还是自定义参数
+    const isPreset = Object.keys(templates.value).includes(selectedTemplate.value) && 
+                     selectedTemplate.value !== 'custom'
+    
+    // 检查参数是否与选中模板一致（未修改）
+    const currentTemplate = templates.value[selectedTemplate.value]
+    const isUnchanged = currentTemplate && 
+                        chunkConfig.value.chunk_size === currentTemplate.chunk_size &&
+                        chunkConfig.value.overlap === currentTemplate.overlap &&
+                        chunkConfig.value.strategy === currentTemplate.strategy
+    
+    if (isPreset && isUnchanged) {
+      // 纯切换模板（参数未修改）
+      await configApi.updateChunk({ template: selectedTemplate.value })
+    } else {
+      // 自定义参数（可能基于某个模板修改）
+      await configApi.updateChunk({
+        chunk_size: chunkConfig.value.chunk_size,
+        overlap: chunkConfig.value.overlap,
+        strategy: chunkConfig.value.strategy,
+        template_name: selectedTemplate.value
+      })
+    }
     ElMessage.success('切片配置已保存，下次同步/重建将使用新配置')
   } catch (error) {
     console.error('保存切片配置失败:', error)

@@ -15,7 +15,7 @@
     "templates": {
       "academic": {
         "name": "英文文献专用",
-        "chunk_size": 2000,
+        "chunk_size": 1000,
         "overlap": 200,
         "strategy": "recursive",
         "separators": [
@@ -80,9 +80,24 @@
           " ",
           ""
         ]
+      },
+      "sentence": {
+        "name": "句子级切片（FAQ/短文档）",
+        "chunk_size": 1000,
+        "overlap": 0,
+        "strategy": "sentence",
+        "separators": [],
+        "overlap_sentences": 2
+      },
+      "markdown_header": {
+        "name": "Markdown标题切片",
+        "chunk_size": 2000,
+        "overlap": 0,
+        "strategy": "markdown_header",
+        "separators": []
       }
     },
-    "default_template": "custom"
+    "default_template": "academic"
   },
   "hnsw": {
     "space": "cosine",
